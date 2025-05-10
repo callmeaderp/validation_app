@@ -12,15 +12,12 @@ class SettingsScreen extends StatefulWidget {
 
 class SettingsScreenState extends State<SettingsScreen> {
   final _formKey = GlobalKey<FormState>();
+  late UserSettings _settings;
   late TextEditingController _heightController;
   late TextEditingController _ageController;
+  BiologicalSex? _sex;
+  ActivityLevel? _activityLevel;
   late TextEditingController _goalRateController;
-  BiologicalSex? _selectedSex;
-  ActivityLevel? _selectedActivity;
-
-  bool _isLoading = true;
-  late UserSettings _settings;
-  final SettingsRepository _repo = SettingsRepository();
 
   @override
   void initState() {
@@ -29,35 +26,20 @@ class SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    final settings = await _repo.loadSettings();
-    if (!mounted) return;
+    final repo = SettingsRepository();
+    final settings = await repo.loadSettings();
     setState(() {
       _settings = settings;
       _heightController = TextEditingController(
         text: settings.height.toString(),
       );
       _ageController = TextEditingController(text: settings.age.toString());
+      _sex = settings.sex;
+      _activityLevel = settings.activityLevel;
       _goalRateController = TextEditingController(
         text: settings.goalRate.toString(),
       );
-      _selectedSex = settings.sex;
-      _selectedActivity = settings.activityLevel;
-      _isLoading = false;
     });
-  }
-
-  Future<void> _saveSettings() async {
-    if (!_formKey.currentState!.validate()) return;
-    final updated = _settings.copyWith(
-      height: double.parse(_heightController.text),
-      age: int.parse(_ageController.text),
-      sex: _selectedSex,
-      activityLevel: _selectedActivity,
-      goalRate: double.parse(_goalRateController.text),
-    );
-    await _repo.saveSettings(updated);
-    if (!mounted) return;
-    Navigator.of(context).pop();
   }
 
   @override
@@ -68,12 +50,26 @@ class SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    final updated = _settings.copyWith(
+      height: double.parse(_heightController.text),
+      age: int.parse(_ageController.text),
+      sex: _sex,
+      activityLevel: _activityLevel,
+      goalRate: double.parse(_goalRateController.text),
+    );
+    final repo = SettingsRepository();
+    await repo.saveSettings(updated);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
+    if (!(_heightController != null && _ageController != null)) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: Padding(
@@ -86,39 +82,40 @@ class SettingsScreenState extends State<SettingsScreen> {
                 controller: _heightController,
                 decoration: const InputDecoration(labelText: 'Height'),
                 keyboardType: TextInputType.number,
-                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                validator:
+                    (v) => v == null || v.isEmpty ? 'Enter height' : null,
               ),
               TextFormField(
                 controller: _ageController,
                 decoration: const InputDecoration(labelText: 'Age'),
                 keyboardType: TextInputType.number,
-                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                validator: (v) => v == null || v.isEmpty ? 'Enter age' : null,
               ),
               DropdownButtonFormField<BiologicalSex>(
-                value: _selectedSex,
-                decoration: const InputDecoration(labelText: 'Sex'),
+                value: _sex,
                 items:
                     BiologicalSex.values
                         .map(
-                          (e) =>
-                              DropdownMenuItem(value: e, child: Text(e.name)),
+                          (s) =>
+                              DropdownMenuItem(value: s, child: Text(s.name)),
                         )
                         .toList(),
-                onChanged: (v) => setState(() => _selectedSex = v!),
-                validator: (v) => v == null ? 'Required' : null,
+                onChanged: (v) => setState(() => _sex = v),
+                decoration: const InputDecoration(labelText: 'Sex'),
+                validator: (v) => v == null ? 'Select sex' : null,
               ),
               DropdownButtonFormField<ActivityLevel>(
-                value: _selectedActivity,
-                decoration: const InputDecoration(labelText: 'Activity Level'),
+                value: _activityLevel,
                 items:
                     ActivityLevel.values
                         .map(
-                          (e) =>
-                              DropdownMenuItem(value: e, child: Text(e.name)),
+                          (a) =>
+                              DropdownMenuItem(value: a, child: Text(a.name)),
                         )
                         .toList(),
-                onChanged: (v) => setState(() => _selectedActivity = v!),
-                validator: (v) => v == null ? 'Required' : null,
+                onChanged: (v) => setState(() => _activityLevel = v),
+                decoration: const InputDecoration(labelText: 'Activity Level'),
+                validator: (v) => v == null ? 'Select activity level' : null,
               ),
               TextFormField(
                 controller: _goalRateController,
@@ -126,13 +123,11 @@ class SettingsScreenState extends State<SettingsScreen> {
                   labelText: 'Goal Rate (%/week)',
                 ),
                 keyboardType: TextInputType.number,
-                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+                validator:
+                    (v) => v == null || v.isEmpty ? 'Enter goal rate' : null,
               ),
               const SizedBox(height: 24),
-              ElevatedButton(
-                onPressed: _saveSettings,
-                child: const Text('Save'),
-              ),
+              ElevatedButton(onPressed: _save, child: const Text('Save')),
             ],
           ),
         ),

@@ -1,39 +1,50 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:validation_app/ui/log_input_status/log_input_status_screen.dart';
-import 'package:validation_app/viewmodel/log_input_status_notifier.dart';
-import 'package:validation_app/data/database/database_helper.dart';
+import 'package:validation_app/ui/log_input_status_screen.dart';
+import 'package:validation_app/ui/graph_screen.dart';
+import 'package:validation_app/ui/log_history_screen.dart';
+import 'package:validation_app/ui/settings_screen.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
-import 'package:validation_app/calculation/calculation_engine.dart';
+import 'package:validation_app/data/repository/settings_repository.dart';
+import 'package:validation_app/viewmodel/log_input_status_notifier.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Initialize the database
-  await DatabaseHelper.instance.database;
-
-  // Instantiate repository and calculation engine
-  final repository = TrackerRepository();
-  final calculationEngine = CalculationEngine();
-
-  runApp(
-    ChangeNotifierProvider(
-      create:
-          (context) => LogInputStatusNotifier(repository, calculationEngine),
-      child: const MyApp(),
-    ),
-  );
+  runApp(const ValidationApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({Key? key}) : super(key: key);
+class ValidationApp extends StatelessWidget {
+  const ValidationApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Validation App',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const LogInputStatusScreen(),
+    return MultiProvider(
+      providers: [
+        Provider<TrackerRepository>(create: (_) => TrackerRepository()),
+        Provider<SettingsRepository>(create: (_) => SettingsRepository()),
+        ChangeNotifierProvider<LogInputStatusNotifier>(
+          create:
+              (ctx) => LogInputStatusNotifier(
+                repository: ctx.read<TrackerRepository>(),
+                settingsRepo: ctx.read<SettingsRepository>(),
+              ),
+        ),
+      ],
+      child: Consumer<LogInputStatusNotifier>(
+        builder: (context, notifier, _) {
+          return MaterialApp(
+            title: 'Validation App',
+            theme: ThemeData(primarySwatch: Colors.blue),
+            initialRoute: '/',
+            routes: {
+              '/': (ctx) => const LogInputStatusScreen(),
+              '/graph': (ctx) => const GraphScreen(),
+              '/history': (ctx) => const LogHistoryScreen(),
+              '/settings': (ctx) => const SettingsScreen(),
+            },
+          );
+        },
+      ),
     );
   }
 }
