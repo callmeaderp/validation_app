@@ -3,7 +3,6 @@ import 'package:validation_app/data/database/log_entry.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
 import 'package:validation_app/data/repository/settings_repository.dart';
 import 'package:validation_app/calculation/calculation_engine.dart';
-import 'package:validation_app/calculation/calculation_engine.dart';
 
 /// ViewModel for the "Log Input & Status" screen.
 /// Uses persisted UserSettings to drive calculations.
@@ -105,5 +104,11 @@ class LogInputStatusNotifier extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// Refreshes the calculation based on latest data.
+  /// Called when returning to this screen or after settings changes.
+  Future<void> refreshCalculations() async {
+    await _loadDataAndCalculate();
   }
 }
