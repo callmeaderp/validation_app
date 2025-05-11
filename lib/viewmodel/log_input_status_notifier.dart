@@ -13,7 +13,7 @@ class LogInputStatusNotifier extends ChangeNotifier {
   final SettingsRepository _settingsRepo;
   final CalculationEngine _calculationEngine;
 
-  // Inputs
+  // Inputs from UI
   double? weightInput;
   int? caloriesInput;
 
@@ -38,9 +38,7 @@ class LogInputStatusNotifier extends ChangeNotifier {
   double? deltaTarget;
   double? currentAlphaWeight;
   double? currentAlphaCalorie;
-  // START OF CHANGES: Add tdeeBlendFactorUsed
   double? tdeeBlendFactorUsed;
-  // END OF CHANGES
 
   LogInputStatusNotifier({
     required TrackerRepository repository,
@@ -53,13 +51,22 @@ class LogInputStatusNotifier extends ChangeNotifier {
   }
 
   /// Called when the user taps "Log Data".
-  Future<void> logData(double weight, int calories) async {
-    _errorMessage = '';
+  /// Accepts nullable inputs and returns true on success, false on failure.
+  Future<bool> logData(double? weight, int? calories) async {
+    _errorMessage = ''; // Clear previous error
     _isLoading = true;
     notifyListeners();
 
+    // Ensure at least one value is provided to log
+    if (weight == null && calories == null) {
+      _errorMessage = 'Please enter weight or calories to log.';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+
     final today = DateTime.now();
-    // Ensure date is in<y_bin_46>-MM-DD format for DB consistency
+    // Ensure date is in YYYY-MM-DD format for DB consistency
     final String dateString =
         "${today.year.toString().padLeft(4, '0')}-"
         "${today.month.toString().padLeft(2, '0')}-"
@@ -67,33 +74,52 @@ class LogInputStatusNotifier extends ChangeNotifier {
 
     final entry = LogEntry(
       date: dateString,
-      rawWeight: weight,
-      rawPreviousDayCalories: calories,
+      rawWeight: weight, // Can be null
+      rawPreviousDayCalories: calories, // Can be null
     );
 
     try {
       await _repository.insertOrUpdateLogEntry(entry);
+      // Important: Clear the temporary input fields after successful logging
+      // The UI will clear its controllers, but the notifier's copies should also clear.
+      weightInput = null;
+      caloriesInput = null;
       await _loadDataAndCalculate(); // This will reload settings and recalculate
+      // _isLoading is set to false in _loadDataAndCalculate's finally block
+      return true; // Indicate success
     } catch (e) {
       _errorMessage = 'Error logging data: $e';
       _isLoading = false;
       notifyListeners();
+      return false; // Indicate failure
     }
   }
 
   /// Fetches history, loads settings, runs the engine, and updates state.
   Future<void> _loadDataAndCalculate() async {
     _isLoading = true;
-    _errorMessage = '';
+    _errorMessage = ''; // Clear error at the start of loading
+    // Notify listeners early if you want to show a loading state immediately
+    // based on _isLoading, but typically it's done once before try and in finally.
+    // For simplicity, keeping one notifyListeners() before try for now.
     notifyListeners();
 
     try {
-      final history = await _repository.getAllLogEntriesOldestFirst();
+      // Fetch fresh settings every time calculations are run.
       _currentUserSettings = await _settingsRepo.loadSettings();
 
+      // Ensure settings are loaded before proceeding with history that might depend on them
+      // or before passing them to calculationEngine.
+      if (_currentUserSettings == null) {
+        // This case should ideally not happen if loadSettings() is robust
+        // or provides default settings. If it can return null, handle it.
+        throw Exception("User settings could not be loaded.");
+      }
+
+      final history = await _repository.getAllLogEntriesOldestFirst();
       final result = await _calculationEngine.calculateStatus(
         history,
-        _currentUserSettings!,
+        _currentUserSettings!, // Now safe to use ! due to check above or if loadSettings ensures non-null
       );
 
       trueWeight = result.trueWeight;
@@ -107,13 +133,11 @@ class LogInputStatusNotifier extends ChangeNotifier {
       deltaTarget = result.deltaTarget;
       currentAlphaWeight = result.currentAlphaWeight;
       currentAlphaCalorie = result.currentAlphaCalorie;
-      // START OF CHANGES: Assign tdeeBlendFactorUsed
       tdeeBlendFactorUsed = result.tdeeBlendFactorUsed;
-      // END OF CHANGES
     } catch (e) {
       _errorMessage = 'Error calculating status: $e';
-      _currentUserSettings = null;
-      // START OF CHANGES: Clear calculation results on error too
+      // Optionally clear sensitive/calculated data on error
+      // _currentUserSettings = null; // Keep settings or clear? Depends on desired behavior.
       trueWeight = null;
       weightTrendPerWeek = null;
       averageCalories = null;
@@ -126,7 +150,6 @@ class LogInputStatusNotifier extends ChangeNotifier {
       currentAlphaWeight = null;
       currentAlphaCalorie = null;
       tdeeBlendFactorUsed = null;
-      // END OF CHANGES
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -136,6 +159,8 @@ class LogInputStatusNotifier extends ChangeNotifier {
   /// Refreshes the calculation based on latest data.
   /// Called when returning to this screen or after settings changes.
   Future<void> refreshCalculations() async {
+    // Clear previous error before refreshing
+    _errorMessage = '';
     await _loadDataAndCalculate();
   }
 }

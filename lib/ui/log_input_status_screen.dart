@@ -3,27 +3,33 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:validation_app/viewmodel/log_input_status_notifier.dart';
 import 'package:intl/intl.dart';
-// UserSettings import is likely still needed for notifier.currentUserSettings typing,
-// but if all direct uses of UserSettings type are removed from this file, it might become unused.
-// For now, let's keep it as notifier.currentUserSettings IS of type UserSettings?
-import 'package:validation_app/models/user_settings.dart';
+import 'package:validation_app/models/user_settings.dart'; // Keep for notifier.currentUserSettings type
 
 /// Main screen for entering daily weight and calories, and viewing calculation results
 class LogInputStatusScreen extends StatefulWidget {
   const LogInputStatusScreen({super.key});
 
   @override
-  // START OF CHANGES: Fix library_private_types_in_public_api
   LogInputStatusScreenState createState() => LogInputStatusScreenState();
-  // END OF CHANGES
 }
 
-// START OF CHANGES: Fix library_private_types_in_public_api
 class LogInputStatusScreenState extends State<LogInputStatusScreen> {
-  // END OF CHANGES
   final _weightController = TextEditingController();
   final _caloriesController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // If there's any specific data loading or refreshing this screen needs
+    // when it becomes active, it can be initiated here or in didChangeDependencies.
+    // For example, ensuring the LogInputStatusNotifier has the latest data.
+    // The notifier itself already calls _loadDataAndCalculate in its constructor.
+    // If a refresh is needed when this tab becomes visible after being inactive,
+    // more complex state management or visibility detection might be needed,
+    // but IndexedStack keeps its state, so often it's not an issue unless
+    // background data changes significantly.
+  }
 
   @override
   void dispose() {
@@ -32,58 +38,34 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
     super.dispose();
   }
 
-  Future<void> _navigateToSettings(BuildContext context) async {
-    // START OF CHANGES: Address use_build_context_synchronously
-    // Capture the notifier instance before the await.
-    final notifier = context.read<LogInputStatusNotifier>();
-    // It's also good practice to capture ScaffoldMessenger if planning to use after await and context might change.
-    // However, for showing a SnackBar, it's usually fine if checked with mounted.
-    // The lint is more about using the BuildContext to find an inherited widget after an async gap.
-    // END OF CHANGES
-
-    final result = await Navigator.pushNamed(context, '/settings');
-
-    // START OF CHANGES: Check mounted before using context-dependent things.
-    if (!mounted) return; // Check mounted immediately after await.
-
-    if (result == true) {
-      notifier.refreshCalculations();
-      _weightController.clear();
-      _caloriesController.clear();
-      notifier.weightInput = null;
-      notifier.caloriesInput = null;
-    }
-    // END OF CHANGES
-  }
+  // The _navigateToSettings method is removed as main navigation
+  // to the Settings screen is now handled by the BottomNavigationBar.
+  // If this screen had specific sub-settings, that would be a different navigation.
 
   @override
   Widget build(BuildContext context) {
+    // This screen now builds its own Scaffold and AppBar
     return Scaffold(
       appBar: AppBar(
         title: const Text('Log Input & Status'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.show_chart),
-            onPressed: () => Navigator.pushNamed(context, '/graph'),
-            tooltip: 'View Graphs',
-          ),
-          IconButton(
-            icon: const Icon(Icons.history),
-            onPressed: () => Navigator.pushNamed(context, '/history'),
-            tooltip: 'View History',
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => _navigateToSettings(context),
-            tooltip: 'Settings',
-          ),
-        ],
+        // Actions for navigating to other main screens (Graph, History, Settings)
+        // are removed because the main BottomNavigationBar now handles this.
+        // If this screen had other specific actions (e.g., "Refresh data for this screen"),
+        // they would go here. For now, we'll keep it simple.
+        // actions: [
+        //   IconButton(
+        //     icon: const Icon(Icons.refresh),
+        //     onPressed: () {
+        //       context.read<LogInputStatusNotifier>().refreshCalculations();
+        //     },
+        //     tooltip: 'Refresh Calculations',
+        //   ),
+        // ],
       ),
       body: Consumer<LogInputStatusNotifier>(
         builder: (context, notifier, child) {
           final weightUnitSuffix =
               notifier.currentUserSettings?.weightUnitString ?? 'kg';
-
           return Padding(
             padding: const EdgeInsets.all(16.0),
             child:
@@ -129,7 +111,11 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                                           ),
                                       validator: (value) {
                                         if (value == null || value.isEmpty) {
-                                          return 'Please enter your weight';
+                                          // Allow empty if user just wants to log calories,
+                                          // but if they log, it must be valid.
+                                          // Or, make it required always:
+                                          // return 'Please enter your weight';
+                                          return null; // Making it optional for now, can be changed
                                         }
                                         final number = double.tryParse(value);
                                         if (number == null) {
@@ -159,7 +145,10 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                                       keyboardType: TextInputType.number,
                                       validator: (value) {
                                         if (value == null || value.isEmpty) {
-                                          return 'Please enter calories';
+                                          // Allow empty if user just wants to log weight.
+                                          // Or, make it required always:
+                                          // return 'Please enter calories';
+                                          return null; // Making it optional for now
                                         }
                                         final number = int.tryParse(value);
                                         if (number == null) {
@@ -187,35 +176,79 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                                                 : () {
                                                   if (_formKey.currentState!
                                                       .validate()) {
-                                                    if (notifier.weightInput !=
+                                                    // Check if at least one field has data
+                                                    if (notifier.weightInput ==
                                                             null &&
-                                                        notifier.caloriesInput !=
-                                                            null) {
-                                                      // Capture context before async gap for ScaffoldMessenger
-                                                      final scaffoldMessenger =
-                                                          ScaffoldMessenger.of(
-                                                            context,
-                                                          );
-                                                      notifier
-                                                          .logData(
-                                                            notifier
-                                                                .weightInput!,
-                                                            notifier
-                                                                .caloriesInput!,
-                                                          )
-                                                          .then((_) {
-                                                            // Using .then to ensure it's after logData completes
-                                                            if (mounted) {
-                                                              // Re-check mounted if you use context after an async operation inside .then
+                                                        notifier.caloriesInput ==
+                                                            null &&
+                                                        (_weightController
+                                                                .text
+                                                                .isNotEmpty ||
+                                                            _caloriesController
+                                                                .text
+                                                                .isNotEmpty)) {
+                                                      // This case implies validation passed but parsing failed for non-empty fields,
+                                                      // which shouldn't happen if validators are correct.
+                                                      // However, if both are truly null and fields were empty, we might not log.
+                                                      // For this app, we usually want to log if *either* is present.
+                                                    }
+
+                                                    // If both are null AND both text fields are empty, maybe show a message or don't log.
+                                                    // For simplicity, if form is valid, and at least one input exists, proceed.
+                                                    // The notifier's logData can handle nulls if DB allows.
+                                                    // Your DB allows nulls, so logging with one value is fine.
+
+                                                    final weightToLog =
+                                                        notifier.weightInput;
+                                                    final caloriesToLog =
+                                                        notifier.caloriesInput;
+
+                                                    if (weightToLog == null &&
+                                                        caloriesToLog == null &&
+                                                        _weightController
+                                                            .text
+                                                            .isEmpty &&
+                                                        _caloriesController
+                                                            .text
+                                                            .isEmpty) {
+                                                      ScaffoldMessenger.of(
+                                                        context,
+                                                      ).showSnackBar(
+                                                        const SnackBar(
+                                                          content: Text(
+                                                            'Please enter weight or calories to log.',
+                                                          ),
+                                                        ),
+                                                      );
+                                                      return;
+                                                    }
+
+                                                    final scaffoldMessenger =
+                                                        ScaffoldMessenger.of(
+                                                          context,
+                                                        ); // Capture before async
+                                                    FocusScope.of(
+                                                      context,
+                                                    ).unfocus(); // Dismiss keyboard
+
+                                                    notifier
+                                                        .logData(
+                                                          weightToLog, // Pass potentially null
+                                                          caloriesToLog, // Pass potentially null
+                                                        )
+                                                        .then((success) {
+                                                          // Assuming logData returns bool for success
+                                                          if (mounted) {
+                                                            if (success) {
                                                               _weightController
                                                                   .clear();
                                                               _caloriesController
                                                                   .clear();
-                                                              FocusScope.of(
-                                                                context,
-                                                              ).unfocus();
+                                                              notifier.weightInput =
+                                                                  null; // Reset internal notifier state too
+                                                              notifier.caloriesInput =
+                                                                  null;
                                                               scaffoldMessenger.showSnackBar(
-                                                                // Use captured scaffoldMessenger
                                                                 const SnackBar(
                                                                   content: Text(
                                                                     'Data logged successfully!',
@@ -227,9 +260,19 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                                                                       ),
                                                                 ),
                                                               );
+                                                            } else {
+                                                              // Notifier should set its own errorMessage
+                                                              // if (notifier.errorMessage.isNotEmpty) {
+                                                              //   scaffoldMessenger.showSnackBar(
+                                                              //     SnackBar(
+                                                              //       content: Text(notifier.errorMessage),
+                                                              //       backgroundColor: Theme.of(context).colorScheme.error,
+                                                              //     ),
+                                                              //   );
+                                                              // }
                                                             }
-                                                          });
-                                                    }
+                                                          }
+                                                        });
                                                   }
                                                 },
                                         child:
@@ -253,7 +296,7 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                             if (notifier.errorMessage.isNotEmpty)
                               Padding(
                                 padding: const EdgeInsets.symmetric(
-                                  vertical: 8.0,
+                                  vertical: 16.0,
                                 ),
                                 child: Text(
                                   notifier.errorMessage,
@@ -265,8 +308,11 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                                 ),
                               ),
                             const SizedBox(height: 24),
+                            // Show results only if there's something meaningful to display
                             if (notifier.trueWeight != null &&
-                                notifier.trueWeight! > 0)
+                                    notifier.trueWeight! > 0 ||
+                                notifier.estimatedTdeeAlgo != null &&
+                                    notifier.estimatedTdeeAlgo! > 0)
                               _buildResultsSection(context, notifier),
                           ],
                         ),
@@ -275,6 +321,7 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
           );
         },
       ),
+      // NO BottomNavigationBar here, it's provided by the main Scaffold in main.dart
     );
   }
 
@@ -282,9 +329,15 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
     BuildContext context,
     LogInputStatusNotifier notifier,
   ) {
-    String formatNumber(double? value, {int decimals = 1}) {
+    String formatNumber(
+      double? value, {
+      int decimals = 1,
+      bool showPlus = false,
+    }) {
       if (value == null) return 'N/A';
-      String formatPattern = "0";
+      String formatPattern = "";
+      if (showPlus && value > 0) formatPattern += "+";
+      formatPattern += "0";
       if (decimals > 0) {
         formatPattern += ".";
         for (int i = 0; i < decimals; i++) {
@@ -310,25 +363,34 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
               style: Theme.of(context).textTheme.titleLarge,
             ),
             const Divider(),
-            _buildMetricTile(
-              context,
-              'True Weight',
-              '${formatNumber(notifier.trueWeight)} $weightUnit',
-              'Smoothed EMA weight filtering out daily fluctuations',
-            ),
-            _buildMetricTile(
-              context,
-              'Weight Trend',
-              '${formatNumber(notifier.weightTrendPerWeek)} $weightUnit/week',
-              'Average weekly weight change over the last $trendSmoothingDays days',
-            ),
-            _buildMetricTile(
-              context,
-              'Average Calories',
-              '${formatNumber(notifier.averageCalories, decimals: 0)} kcal',
-              'Smoothed EMA of daily caloric intake',
-            ),
-            const Divider(),
+            if (notifier.trueWeight != null && notifier.trueWeight! > 0) ...[
+              _buildMetricTile(
+                context,
+                'True Weight',
+                '${formatNumber(notifier.trueWeight, decimals: 1)} $weightUnit',
+                'Smoothed EMA weight filtering out daily fluctuations.',
+              ),
+              _buildMetricTile(
+                context,
+                'Weight Trend',
+                '${formatNumber(notifier.weightTrendPerWeek, decimals: 2, showPlus: true)} $weightUnit/week',
+                'Average weekly weight change over the last $trendSmoothingDays days.',
+              ),
+            ],
+            if (notifier.averageCalories != null &&
+                notifier.averageCalories! > 0)
+              _buildMetricTile(
+                context,
+                'Average Calories',
+                '${formatNumber(notifier.averageCalories, decimals: 0)} kcal',
+                'Smoothed EMA of daily caloric intake.',
+              ),
+
+            if ((notifier.trueWeight != null && notifier.trueWeight! > 0) ||
+                (notifier.averageCalories != null &&
+                    notifier.averageCalories! > 0))
+              const Divider(),
+
             Text(
               'Energy Expenditure & Targets',
               style: Theme.of(context).textTheme.titleMedium,
@@ -336,69 +398,73 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
             const SizedBox(height: 8),
             _buildMetricTile(
               context,
-              'Estimated TDEE (Algorithm)',
+              'Est. TDEE (Algorithm)',
               '${formatNumber(notifier.estimatedTdeeAlgo, decimals: 0)} kcal',
-              'Total Daily Energy Expenditure calculated from your data',
+              'Total Daily Energy Expenditure calculated from your data.',
             ),
             _buildMetricTile(
               context,
               'Target Calories (Algorithm)',
               '${formatNumber(notifier.targetCaloriesAlgo, decimals: 0)} kcal',
-              'Recommended daily calories based on your goal rate and algorithm TDEE',
+              'Recommended daily calories based on your goal and algorithm TDEE.',
             ),
-            _buildMetricTile(
-              context,
-              'Estimated TDEE (Standard)',
-              '${formatNumber(notifier.estimatedTdeeStandard, decimals: 0)} kcal',
-              'TDEE calculated using standard formula (Mifflin-St Jeor) for comparison',
-            ),
-            _buildMetricTile(
-              context,
-              'Target Calories (Standard)',
-              '${formatNumber(notifier.targetCaloriesStandard, decimals: 0)} kcal',
-              'Recommended daily calories based on your goal rate and standard TDEE',
-            ),
-            const Divider(),
-            Text(
-              'Comparisons & Diagnostics',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            _buildMetricTile(
-              context,
-              'TDEE Delta',
-              '${formatNumber(notifier.deltaTdee, decimals: 0)} kcal',
-              'Difference: Algorithm TDEE - Standard TDEE',
-            ),
-            _buildMetricTile(
-              context,
-              'Target Delta',
-              '${formatNumber(notifier.deltaTarget, decimals: 0)} kcal',
-              'Difference: Algorithm Target - Standard Target',
-            ),
+            if (notifier.currentUserSettings != null &&
+                notifier.currentUserSettings!.age > 0 &&
+                notifier.currentUserSettings!.height > 0) ...[
+              _buildMetricTile(
+                context,
+                'Est. TDEE (Standard)',
+                '${formatNumber(notifier.estimatedTdeeStandard, decimals: 0)} kcal',
+                'TDEE calculated using Mifflin-St Jeor formula for comparison.',
+              ),
+              _buildMetricTile(
+                context,
+                'Target Calories (Standard)',
+                '${formatNumber(notifier.targetCaloriesStandard, decimals: 0)} kcal',
+                'Recommended daily calories based on your goal and standard TDEE.',
+              ),
+              const Divider(),
+              Text(
+                'Comparisons & Diagnostics',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              _buildMetricTile(
+                context,
+                'TDEE Delta',
+                '${formatNumber(notifier.deltaTdee, decimals: 0, showPlus: true)} kcal',
+                'Difference: Algorithm TDEE - Standard TDEE.',
+              ),
+              _buildMetricTile(
+                context,
+                'Target Delta',
+                '${formatNumber(notifier.deltaTarget, decimals: 0, showPlus: true)} kcal',
+                'Difference: Algorithm Target - Standard Target.',
+              ),
+            ],
             _buildMetricTile(
               context,
               'Weight Alpha',
               formatNumber(notifier.currentAlphaWeight, decimals: 3),
-              'Current smoothing factor for weight EMA (dynamic)',
+              'Current smoothing factor for weight EMA (dynamic). Range: ${notifier.currentUserSettings?.weightAlphaMin ?? "N/A"} - ${notifier.currentUserSettings?.weightAlphaMax ?? "N/A"}',
             ),
             _buildMetricTile(
               context,
               'Calorie Alpha',
               formatNumber(notifier.currentAlphaCalorie, decimals: 3),
-              'Current smoothing factor for calorie EMA (dynamic)',
+              'Current smoothing factor for calorie EMA (dynamic). Range: ${notifier.currentUserSettings?.calorieAlphaMin ?? "N/A"} - ${notifier.currentUserSettings?.calorieAlphaMax ?? "N/A"}',
             ),
-            // START OF CHANGES: Correctly access tdeeBlendFactorUsed from notifier
             if (notifier.tdeeBlendFactorUsed != null &&
-                notifier.tdeeBlendFactorUsed! < 1.0 &&
-                notifier.tdeeBlendFactorUsed! > 0.0)
+                notifier.tdeeBlendFactorUsed! <
+                    1.0 && // Only show if blending is active (not 1.0)
+                notifier.tdeeBlendFactorUsed! >=
+                    0.0) // and not fully data-driven (0.0)
               _buildMetricTile(
                 context,
                 'TDEE Blend Factor',
-                formatNumber(notifier.tdeeBlendFactorUsed, decimals: 2),
-                'Weight of standard TDEE in current blend (1.0 = all standard, 0.0 = all algorithm)',
+                '${formatNumber(notifier.tdeeBlendFactorUsed, decimals: 2)} (Std. TDEE Weight)',
+                'Weight of standard TDEE in current blend (1.0 = all standard, 0.0 = all algorithm). Decays over ~3 weeks.',
               ),
-            // END OF CHANGES
           ],
         ),
       ),
@@ -418,10 +484,11 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            flex: 5,
+            flex: 5, // Give more space to title and icon
             child: Row(
               children: [
                 Flexible(
+                  // Allow title to wrap if needed
                   child: Text(
                     title,
                     style: const TextStyle(fontWeight: FontWeight.w500),
@@ -430,18 +497,22 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                 const SizedBox(width: 4),
                 Tooltip(
                   message: tooltip,
-                  preferBelow: false,
+                  preferBelow: false, // Adjust as needed based on layout
+                  triggerMode: TooltipTriggerMode.tap, // Good for mobile
+                  showDuration: const Duration(seconds: 5), // Let user read
                   child: Icon(
                     Icons.info_outline,
                     size: 16,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                    color:
+                        Theme.of(context).textTheme.bodySmall?.color ??
+                        Colors.grey,
                   ),
                 ),
               ],
             ),
           ),
           Expanded(
-            flex: 3,
+            flex: 3, // Give reasonable space for value
             child: Text(
               value,
               style: const TextStyle(fontWeight: FontWeight.bold),

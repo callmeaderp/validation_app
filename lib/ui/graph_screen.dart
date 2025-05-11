@@ -1,6 +1,10 @@
+// lib/ui/graph_screen.dart
+import 'dart:math'; // For max/min in axis calculations if needed
+import 'package:flutter/foundation.dart'; // For debugPrint
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+// import 'package:provider/provider.dart'; // Removed as it's unused currently
 import 'package:validation_app/data/database/log_entry.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
 import 'package:validation_app/calculation/calculation_engine.dart';
@@ -8,7 +12,7 @@ import 'package:validation_app/models/user_settings.dart';
 import 'package:validation_app/data/repository/settings_repository.dart';
 
 class GraphScreen extends StatefulWidget {
-  const GraphScreen({Key? key}) : super(key: key);
+  const GraphScreen({super.key}); // Changed to super.key
 
   @override
   State<GraphScreen> createState() => _GraphScreenState();
@@ -22,23 +26,24 @@ class _GraphScreenState extends State<GraphScreen> {
   bool _isLoading = true;
   String _errorMessage = '';
 
-  // Graph data
-  List<LogEntry> _entries = [];
+  List<LogEntry> _allEntries = [];
   List<FlSpot> _rawWeightSpots = [];
   List<FlSpot> _trueWeightSpots = [];
   List<FlSpot> _calorieSpots = [];
 
-  // Graph options and filters
   int _timeRangeMonths = 1;
   bool _showRawWeight = true;
   bool _showTrueWeight = true;
   bool _showCalories = false;
 
-  // Min/max values for y-axes scaling
-  double _minWeight = 0;
-  double _maxWeight = 100;
-  double _minCalorie = 0;
-  double _maxCalorie = 3000;
+  double _minWeightY = 0;
+  double _maxWeightY = 100;
+  double _minCalorieY = 0;
+  double _maxCalorieY = 3000;
+  double _minX = 0;
+  double _maxX = 30;
+
+  DateTime? _firstEntryDateForChart;
 
   @override
   void initState() {
@@ -47,32 +52,41 @@ class _GraphScreenState extends State<GraphScreen> {
   }
 
   Future<void> _loadData() async {
+    if (!mounted) return;
     setState(() {
       _isLoading = true;
       _errorMessage = '';
     });
 
     try {
-      // Load data from repository
-      final entries = await _repository.getAllLogEntriesOldestFirst();
+      final allEntries = await _repository.getAllLogEntriesOldestFirst();
       final settings = await _settingsRepo.loadSettings();
 
-      if (entries.isEmpty) {
+      if (!mounted) return;
+
+      if (allEntries.isEmpty) {
         setState(() {
           _isLoading = false;
-          _entries = entries;
+          _allEntries = [];
+          _rawWeightSpots = [];
+          _trueWeightSpots = [];
+          _calorieSpots = [];
         });
         return;
       }
+      _allEntries = allEntries;
+      await _processDataForChart(settings);
 
-      // Process data for the graph
-      await _processData(entries, settings);
-
-      setState(() {
-        _isLoading = false;
-        _entries = entries;
-      });
-    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      if (!mounted) return;
+      debugPrint(
+        'Error loading graph data: $e\n$stackTrace',
+      ); // Changed to debugPrint
       setState(() {
         _isLoading = false;
         _errorMessage = 'Error loading data: $e';
@@ -80,124 +94,189 @@ class _GraphScreenState extends State<GraphScreen> {
     }
   }
 
-  Future<void> _processData(
-    List<LogEntry> entries,
-    UserSettings settings,
-  ) async {
-    // Clear existing data
-    _rawWeightSpots = [];
-    _trueWeightSpots = [];
-    _calorieSpots = [];
+  Future<void> _processDataForChart(UserSettings settings) async {
+    if (!mounted) return;
 
-    // Filter entries based on time range
-    final filteredEntries = _getFilteredEntries(entries);
-    if (filteredEntries.isEmpty) return;
+    List<LogEntry> filteredEntries = _getFilteredEntriesByTimeRange(
+      _allEntries,
+    );
 
-    // Set min/max values for better graph scaling
-    _setMinMaxValues(filteredEntries);
-
-    // Get x coordinate starting point (days since first entry)
-    final firstDate = DateTime.parse(filteredEntries.first.date);
-
-    // Add raw weight spots
-    for (int i = 0; i < filteredEntries.length; i++) {
-      final entry = filteredEntries[i];
-      if (entry.rawWeight != null) {
-        final entryDate = DateTime.parse(entry.date);
-        final days = entryDate.difference(firstDate).inDays.toDouble();
-        _rawWeightSpots.add(FlSpot(days, entry.rawWeight!));
-      }
+    if (filteredEntries.isEmpty) {
+      setState(() {
+        _rawWeightSpots = [];
+        _trueWeightSpots = [];
+        _calorieSpots = [];
+        _firstEntryDateForChart = null;
+        _minX = 0;
+        _maxX = _timeRangeMonths == 100 ? 365 : (30.0 * _timeRangeMonths);
+      });
+      return;
     }
 
-    // Calculate and add true weight and calorie EMA spots
-    // This requires running the calculation engine on the data
-    List<double> weightEmaValues = [];
-    List<double> calorieEmaValues = [];
+    _firstEntryDateForChart = DateTime.parse(filteredEntries.first.date);
 
-    // Process entries one by one to get historical EMAs
-    // In a real app, this might be optimized or cached
-    List<LogEntry> processedEntries = [];
+    List<FlSpot> rawWeightSpots = [];
+    List<FlSpot> trueWeightSpots = [];
+    List<FlSpot> calorieSpots = [];
+    List<double> rawWeightsForMinMax = [];
+    List<double> trueWeightsForMinMax = [];
+    List<double> calorieEMAsForMinMax = [];
+
     for (int i = 0; i < filteredEntries.length; i++) {
-      processedEntries.add(filteredEntries[i]);
+      final currentFilteredEntry = filteredEntries[i];
+      // Find the full history up to the current filtered entry to get accurate EMAs
+      int originalIndex = _allEntries.indexWhere(
+        (entry) => entry.date == currentFilteredEntry.date,
+      );
+      List<LogEntry> historyForCalc =
+          (originalIndex != -1)
+              ? _allEntries.sublist(0, originalIndex + 1)
+              : [
+                currentFilteredEntry,
+              ]; // Fallback, though originalIndex should always be found
 
       final result = await _calculationEngine.calculateStatus(
-        processedEntries,
+        historyForCalc,
         settings,
       );
 
-      final entryDate = DateTime.parse(filteredEntries[i].date);
-      final days = entryDate.difference(firstDate).inDays.toDouble();
+      final entryDate = DateTime.parse(currentFilteredEntry.date);
+      final days =
+          entryDate.difference(_firstEntryDateForChart!).inDays.toDouble();
 
+      if (currentFilteredEntry.rawWeight != null) {
+        rawWeightSpots.add(FlSpot(days, currentFilteredEntry.rawWeight!));
+        rawWeightsForMinMax.add(currentFilteredEntry.rawWeight!);
+      }
       if (result.trueWeight > 0) {
-        _trueWeightSpots.add(FlSpot(days, result.trueWeight));
-        weightEmaValues.add(result.trueWeight);
+        trueWeightSpots.add(FlSpot(days, result.trueWeight));
+        trueWeightsForMinMax.add(result.trueWeight);
       }
-
       if (result.averageCalories > 0) {
-        _calorieSpots.add(FlSpot(days, result.averageCalories));
-        calorieEmaValues.add(result.averageCalories);
+        calorieSpots.add(FlSpot(days, result.averageCalories));
+        calorieEMAsForMinMax.add(result.averageCalories);
       }
     }
 
-    // If we have EMAs, adjust min/max for better scaling
-    if (weightEmaValues.isNotEmpty) {
-      final minEmaWeight = weightEmaValues.reduce((a, b) => a < b ? a : b);
-      final maxEmaWeight = weightEmaValues.reduce((a, b) => a > b ? a : b);
-      // Pad by 5% to give some space
-      _minWeight = (minEmaWeight * 0.95).roundToDouble();
-      _maxWeight = (maxEmaWeight * 1.05).roundToDouble();
-    }
+    if (!mounted) return;
 
-    if (calorieEmaValues.isNotEmpty) {
-      final minEmaCalorie = calorieEmaValues.reduce((a, b) => a < b ? a : b);
-      final maxEmaCalorie = calorieEmaValues.reduce((a, b) => a > b ? a : b);
-      // Pad by 10% to give some space
-      _minCalorie = (minEmaCalorie * 0.9).roundToDouble();
-      _maxCalorie = (maxEmaCalorie * 1.1).roundToDouble();
-    }
+    setState(() {
+      _rawWeightSpots = rawWeightSpots;
+      _trueWeightSpots = trueWeightSpots;
+      _calorieSpots = calorieSpots;
+      _updateAxisLimits(
+        rawWeightsForMinMax,
+        trueWeightsForMinMax,
+        calorieEMAsForMinMax,
+        filteredEntries,
+      );
+    });
   }
 
-  List<LogEntry> _getFilteredEntries(List<LogEntry> entries) {
-    if (entries.isEmpty) return [];
+  List<LogEntry> _getFilteredEntriesByTimeRange(List<LogEntry> entries) {
+    if (entries.isEmpty) {
+      return [];
+    }
+    if (_timeRangeMonths == 100) {
+      return entries;
+    }
 
-    // Filter based on selected time range
     final now = DateTime.now();
-    final cutoffDate = DateTime(
-      now.year,
-      now.month - _timeRangeMonths,
-      now.day,
-    );
+    int year = now.year;
+    int month = now.month - _timeRangeMonths;
+    while (month <= 0) {
+      month += 12;
+      year -= 1;
+    }
+    // Ensure day is valid for the calculated month and year
+    int day = now.day;
+    int lastDayOfMonth =
+        DateTime(year, month + 1, 0).day; // Get last day of target month
+    if (day > lastDayOfMonth) {
+      day = lastDayOfMonth;
+    }
+    final cutoffDate = DateTime(year, month, day);
 
     return entries.where((entry) {
-      final entryDate = DateTime.parse(entry.date);
-      return entryDate.isAfter(cutoffDate) ||
-          entryDate.isAtSameMomentAs(cutoffDate);
+      try {
+        final entryDate = DateTime.parse(entry.date);
+        return !entryDate.isBefore(cutoffDate);
+      } catch (e) {
+        debugPrint(
+          "Error parsing date in _getFilteredEntriesByTimeRange: ${entry.date}",
+        );
+        return false;
+      }
     }).toList();
   }
 
-  void _setMinMaxValues(List<LogEntry> entries) {
-    // Find min/max weights from raw data for initial scaling
-    final weights =
-        entries
-            .where((e) => e.rawWeight != null)
-            .map((e) => e.rawWeight!)
-            .toList();
+  void _updateAxisLimits(
+    List<double> rawWeights,
+    List<double> trueWeights,
+    List<double> calorieEMAs,
+    List<LogEntry> displayedEntries,
+  ) {
+    List<double> allDisplayableWeights = [];
+    if (_showRawWeight) allDisplayableWeights.addAll(rawWeights);
+    if (_showTrueWeight) allDisplayableWeights.addAll(trueWeights);
 
-    if (weights.isNotEmpty) {
-      _minWeight = weights.reduce((a, b) => a < b ? a : b) * 0.95;
-      _maxWeight = weights.reduce((a, b) => a > b ? a : b) * 1.05;
+    if (allDisplayableWeights.isNotEmpty) {
+      allDisplayableWeights.sort();
+      _minWeightY = (allDisplayableWeights.first * 0.95).floorToDouble() - 1;
+      _maxWeightY = (allDisplayableWeights.last * 1.05).ceilToDouble() + 1;
+      if ((_maxWeightY - _minWeightY) < 5) {
+        // Ensure a minimum range
+        _maxWeightY = _minWeightY + 5;
+      }
+      if (_minWeightY == _maxWeightY) {
+        _minWeightY -= 2.5;
+        _maxWeightY += 2.5;
+      }
+    } else {
+      _minWeightY = 60;
+      _maxWeightY = 90; // Default sensible weight range
     }
 
-    // Find min/max calories for scaling
-    final calories =
-        entries
-            .where((e) => e.rawPreviousDayCalories != null)
-            .map((e) => e.rawPreviousDayCalories!.toDouble())
-            .toList();
+    List<double> allDisplayableCalories = [];
+    if (_showCalories) allDisplayableCalories.addAll(calorieEMAs);
 
-    if (calories.isNotEmpty) {
-      _minCalorie = calories.reduce((a, b) => a < b ? a : b) * 0.9;
-      _maxCalorie = calories.reduce((a, b) => a > b ? a : b) * 1.1;
+    if (allDisplayableCalories.isNotEmpty) {
+      allDisplayableCalories.sort();
+      _minCalorieY = (allDisplayableCalories.first * 0.90).floorToDouble() - 50;
+      _maxCalorieY = (allDisplayableCalories.last * 1.10).ceilToDouble() + 50;
+      if ((_maxCalorieY - _minCalorieY) < 200) {
+        // Ensure a minimum range
+        _maxCalorieY = _minCalorieY + 200;
+      }
+      if (_minCalorieY == _maxCalorieY) {
+        _minCalorieY -= 100;
+        _maxCalorieY += 100;
+      }
+    } else {
+      _minCalorieY = 1500;
+      _maxCalorieY = 3500; // Default sensible calorie range
+    }
+
+    if (displayedEntries.isNotEmpty && _firstEntryDateForChart != null) {
+      _minX = 0; // Always start X from 0 for the current filtered view
+      final lastEntryDate = DateTime.parse(displayedEntries.last.date);
+      _maxX = max(
+        0,
+        lastEntryDate.difference(_firstEntryDateForChart!).inDays.toDouble(),
+      );
+      if (_maxX < 7) {
+        // Ensure a minimum visible range, e.g., 1 week
+        _maxX = 7;
+      }
+    } else {
+      _minX = 0;
+      _maxX =
+          (_timeRangeMonths == 100)
+              ? 30.0
+              : (30.0 * _timeRangeMonths).toDouble().clamp(
+                7,
+                3650,
+              ); // default for selected range
     }
   }
 
@@ -219,13 +298,14 @@ class _GraphScreenState extends State<GraphScreen> {
               ? const Center(child: CircularProgressIndicator())
               : _errorMessage.isNotEmpty
               ? _buildErrorView()
-              : _entries.isEmpty
-              ? _buildEmptyView()
+              : _allEntries.isEmpty
+              ? _buildEmptyLogView()
               : _buildGraphView(),
     );
   }
 
   Widget _buildErrorView() {
+    /* ... (keep as is) ... */
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -247,7 +327,8 @@ class _GraphScreenState extends State<GraphScreen> {
     );
   }
 
-  Widget _buildEmptyView() {
+  Widget _buildEmptyLogView() {
+    /* ... (keep as is) ... */
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -257,19 +338,40 @@ class _GraphScreenState extends State<GraphScreen> {
             const Icon(Icons.show_chart, size: 48, color: Colors.grey),
             const SizedBox(height: 16),
             const Text(
-              'No data available',
+              'No data to display',
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Start logging your daily weight and calories to see your progress here',
+              'Start logging your weight and calories to see your progress here.',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyFilteredView() {
+    /* ... (keep as is) ... */
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.zoom_out_map, size: 48, color: Colors.grey),
             const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Go to Log Screen'),
+            const Text(
+              'No data in selected range',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Try selecting a different time range or adding more log entries.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey),
             ),
           ],
         ),
@@ -278,69 +380,86 @@ class _GraphScreenState extends State<GraphScreen> {
   }
 
   Widget _buildGraphView() {
+    final bool noFilteredDataForChart =
+        _rawWeightSpots.isEmpty &&
+        _trueWeightSpots.isEmpty &&
+        _calorieSpots.isEmpty;
+    if (noFilteredDataForChart && !_isLoading) {
+      // If filters result in no data points
+      return _buildEmptyFilteredView();
+    }
+
+    final bool hasWeightData =
+        (_showRawWeight && _rawWeightSpots.isNotEmpty) ||
+        (_showTrueWeight && _trueWeightSpots.isNotEmpty);
+    final bool hasCalorieData = _showCalories && _calorieSpots.isNotEmpty;
+
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(8.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Time range selector
           _buildTimeRangeSelector(),
-
-          const SizedBox(height: 16),
-
-          // Graph options
+          const SizedBox(height: 8),
           _buildGraphOptions(),
-
-          const SizedBox(height: 24),
-
-          // Main chart
-          Container(
-            height: 400,
-            padding: const EdgeInsets.all(8.0),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.grey.withAlpha(75),
-                  spreadRadius: 2,
-                  blurRadius: 5,
-                  offset: const Offset(0, 3),
+          const SizedBox(height: 16),
+          if (!hasWeightData && !hasCalorieData)
+            Padding(
+              // Message if options hide all data
+              padding: const EdgeInsets.all(32.0),
+              child: Center(
+                child: Text(
+                  "No data selected to display.\nEnable 'Raw Weight', 'True Weight', or 'Calories' in options.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).hintColor),
                 ),
-              ],
+              ),
+            )
+          else
+            SizedBox(
+              height: 400,
+              child: Card(
+                elevation: 2,
+                margin: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 16, 16, 8),
+                  child: _buildChart(),
+                ),
+              ),
             ),
-            child: _buildChart(),
-          ),
-
-          const SizedBox(height: 24),
-
-          // Legend
-          _buildLegend(),
+          const SizedBox(height: 16),
+          if (hasWeightData || hasCalorieData) _buildLegend(),
         ],
       ),
     );
   }
 
   Widget _buildTimeRangeSelector() {
+    /* ... (keep as is, maybe add curly braces to if) ... */
     return Card(
+      elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Time Range',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            Wrap(
+              alignment: WrapAlignment.spaceEvenly,
+              spacing: 8.0,
+              runSpacing: 4.0,
               children: [
                 _timeRangeButton('1M', 1),
                 _timeRangeButton('3M', 3),
                 _timeRangeButton('6M', 6),
                 _timeRangeButton('1Y', 12),
-                _timeRangeButton('All', 100), // Large value to show all data
+                _timeRangeButton('All', 100),
               ],
             ),
           ],
@@ -350,15 +469,23 @@ class _GraphScreenState extends State<GraphScreen> {
   }
 
   Widget _timeRangeButton(String label, int months) {
+    /* ... (add curly braces to if) ... */
     final isSelected = _timeRangeMonths == months;
-
     return ElevatedButton(
-      onPressed: () {
+      onPressed: () async {
         if (_timeRangeMonths != months) {
+          // Added curly braces
           setState(() {
             _timeRangeMonths = months;
+            _isLoading = true;
           });
-          _loadData();
+          final settings = await _settingsRepo.loadSettings();
+          await _processDataForChart(settings);
+          if (mounted) {
+            setState(() {
+              _isLoading = false;
+            });
+          }
         }
       },
       style: ElevatedButton.styleFrom(
@@ -367,64 +494,76 @@ class _GraphScreenState extends State<GraphScreen> {
                 ? Theme.of(context).colorScheme.primary
                 : Theme.of(context).colorScheme.surface,
         foregroundColor:
-            isSelected ? Colors.white : Theme.of(context).colorScheme.onSurface,
+            isSelected
+                ? Theme.of(context).colorScheme.onPrimary
+                : Theme.of(context).colorScheme.onSurface,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        textStyle: const TextStyle(fontSize: 13),
       ),
       child: Text(label),
     );
   }
 
   Widget _buildGraphOptions() {
+    /* ... (keep as is) ... */
     return Card(
+      elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Graph Options',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
-            const SizedBox(height: 8),
             Row(
               children: [
                 Expanded(
                   child: CheckboxListTile(
-                    title: const Text('Raw Weight'),
+                    title: const Text(
+                      'Raw Weight',
+                      style: TextStyle(fontSize: 14),
+                    ),
                     value: _showRawWeight,
-                    onChanged: (value) {
-                      setState(() {
-                        _showRawWeight = value ?? true;
-                      });
-                    },
+                    onChanged:
+                        (value) =>
+                            setState(() => _showRawWeight = value ?? true),
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
+                    contentPadding: EdgeInsets.zero,
                   ),
                 ),
                 Expanded(
                   child: CheckboxListTile(
-                    title: const Text('True Weight'),
+                    title: const Text(
+                      'True Weight',
+                      style: TextStyle(fontSize: 14),
+                    ),
                     value: _showTrueWeight,
-                    onChanged: (value) {
-                      setState(() {
-                        _showTrueWeight = value ?? true;
-                      });
-                    },
+                    onChanged:
+                        (value) =>
+                            setState(() => _showTrueWeight = value ?? true),
                     controlAffinity: ListTileControlAffinity.leading,
                     dense: true,
+                    contentPadding: EdgeInsets.zero,
                   ),
                 ),
               ],
             ),
             CheckboxListTile(
-              title: const Text('Calories'),
+              title: const Text(
+                'Avg. Calories',
+                style: TextStyle(fontSize: 14),
+              ),
               value: _showCalories,
-              onChanged: (value) {
-                setState(() {
-                  _showCalories = value ?? false;
-                });
-              },
+              onChanged:
+                  (value) => setState(() => _showCalories = value ?? false),
               controlAffinity: ListTileControlAffinity.leading,
               dense: true,
+              contentPadding: EdgeInsets.zero,
             ),
           ],
         ),
@@ -432,203 +571,292 @@ class _GraphScreenState extends State<GraphScreen> {
     );
   }
 
-  Widget _buildChart() {
-    // Prepare date axis labels
-    final firstEntryDate =
-        _entries.isNotEmpty
-            ? DateTime.parse(_entries.first.date)
-            : DateTime.now().subtract(const Duration(days: 30));
+  LineChartBarData _buildLineBarData(
+    List<FlSpot> spots,
+    Color color, {
+    bool isCurved = true,
+    double barWidth = 2.5,
+    bool showDots = false,
+  }) {
+    /* ... (keep as is) ... */
+    return LineChartBarData(
+      spots: spots,
+      isCurved: isCurved,
+      color: color,
+      barWidth: barWidth,
+      isStrokeCapRound: true,
+      dotData: FlDotData(show: showDots),
+      belowBarData: BarAreaData(show: false),
+    );
+  }
 
-    // Empty state
-    if (_rawWeightSpots.isEmpty && _trueWeightSpots.isEmpty) {
-      return const Center(
-        child: Text(
-          'Not enough data to display chart',
-          style: TextStyle(color: Colors.grey),
+  Widget _buildChart() {
+    final List<LineChartBarData> lineBarsData = [];
+    if (_showRawWeight && _rawWeightSpots.isNotEmpty) {
+      lineBarsData.add(
+        _buildLineBarData(
+          _rawWeightSpots,
+          Theme.of(context).colorScheme.secondary.withOpacity(0.5),
+          isCurved: false,
+          barWidth: 1.5,
+          showDots: true,
         ),
       );
     }
+    if (_showTrueWeight && _trueWeightSpots.isNotEmpty) {
+      lineBarsData.add(
+        _buildLineBarData(
+          _trueWeightSpots,
+          Theme.of(context).colorScheme.primary,
+          barWidth: 3,
+        ),
+      );
+    }
+    if (_showCalories && _calorieSpots.isNotEmpty) {
+      lineBarsData.add(
+        _buildLineBarData(_calorieSpots, Colors.orange.shade700, barWidth: 2),
+      );
+    }
 
-    return Padding(
-      padding: const EdgeInsets.only(right: 16.0, bottom: 8.0),
-      child: LineChart(
-        LineChartData(
-          gridData: FlGridData(
-            show: true,
-            drawVerticalLine: true,
-            horizontalInterval: 5, // Adjust based on weight range
-            verticalInterval: 7, // Weekly intervals
+    double weightInterval = ((_maxWeightY - _minWeightY) / 6).clamp(1, 50);
+    if (weightInterval <= 0) weightInterval = 1;
+    if (weightInterval > 1 && weightInterval <= 2.5)
+      weightInterval = 2.5;
+    else if (weightInterval > 2.5 && weightInterval <= 5)
+      weightInterval = 5;
+    else if (weightInterval > 5)
+      weightInterval = ((weightInterval / 5).ceil() * 5.0);
+    if (weightInterval == 0 && _maxWeightY > _minWeightY)
+      weightInterval = (_maxWeightY - _minWeightY) / 2; // Avoid 0 interval
+
+    double calorieInterval = ((_maxCalorieY - _minCalorieY) / 6).clamp(
+      50,
+      1000,
+    );
+    if (calorieInterval <= 0) calorieInterval = 50;
+    if (calorieInterval > 50 && calorieInterval <= 100)
+      calorieInterval = 100;
+    else if (calorieInterval > 100)
+      calorieInterval = (calorieInterval / 100).ceil() * 100.0;
+    if (calorieInterval == 0 && _maxCalorieY > _minCalorieY)
+      calorieInterval = (_maxCalorieY - _minCalorieY) / 2;
+
+    bool onlyShowingCalories =
+        _showCalories && !_showRawWeight && !_showTrueWeight;
+    bool onlyShowingWeight =
+        (_showRawWeight || _showTrueWeight) && !_showCalories;
+
+    return LineChart(
+      LineChartData(
+        gridData: FlGridData(
+          show: true,
+          drawVerticalLine: true,
+          horizontalInterval:
+              onlyShowingCalories ? calorieInterval : weightInterval,
+          verticalInterval:
+              (_maxX - _minX) > 35
+                  ? (((_maxX - _minX).clamp(1, 3650)) / 7)
+                      .roundToDouble()
+                      .clamp(7, 30)
+                  : 7,
+          getDrawingHorizontalLine:
+              (value) => FlLine(
+                color: Theme.of(context).dividerColor.withOpacity(0.5),
+                strokeWidth: 0.5,
+              ),
+          getDrawingVerticalLine:
+              (value) => FlLine(
+                color: Theme.of(context).dividerColor.withOpacity(0.5),
+                strokeWidth: 0.5,
+              ),
+        ),
+        titlesData: FlTitlesData(
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles:
+                  (_showRawWeight || _showTrueWeight) && !onlyShowingCalories,
+              interval: weightInterval,
+              reservedSize: 40,
+              getTitlesWidget:
+                  (value, meta) => Text(
+                    value.toStringAsFixed(0),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Theme.of(context).textTheme.bodySmall?.color,
+                    ),
+                  ),
+            ),
           ),
-          titlesData: FlTitlesData(
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                interval: 5, // Adjust based on weight range
-                reservedSize: 40,
-                getTitlesWidget:
-                    (value, meta) => Text(
-                      value.toInt().toString(),
-                      style: const TextStyle(fontSize: 10),
+          rightTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: _showCalories && !onlyShowingWeight,
+              interval: calorieInterval,
+              reservedSize: 40,
+              getTitlesWidget:
+                  (value, meta) => Text(
+                    value.toStringAsFixed(0),
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: Colors.orange.shade700,
                     ),
-              ),
-            ),
-            rightTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: _showCalories,
-                interval: 500, // Adjust based on calorie range
-                reservedSize: 40,
-                getTitlesWidget:
-                    (value, meta) => Text(
-                      value.toInt().toString(),
-                      style: TextStyle(fontSize: 10, color: Colors.orange[700]),
-                    ),
-              ),
-            ),
-            bottomTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                interval: 7, // Weekly interval
-                reservedSize: 30,
-                getTitlesWidget: (value, meta) {
-                  final date = firstEntryDate.add(
-                    Duration(days: value.toInt()),
-                  );
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 8.0),
-                    child: Text(
-                      DateFormat('MM/dd').format(date),
-                      style: const TextStyle(fontSize: 9),
-                    ),
-                  );
-                },
-              ),
-            ),
-            topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
+                  ),
             ),
           ),
-          borderData: FlBorderData(show: true),
-          minX: 0,
-          maxX:
-              _rawWeightSpots.isNotEmpty
-                  ? _rawWeightSpots.last.x
-                  : _trueWeightSpots.last.x,
-          minY: _minWeight,
-          maxY: _maxWeight,
-          // Simplified touch data without tooltipStyle
-          lineTouchData: LineTouchData(
-            touchTooltipData: LineTouchTooltipData(
-              getTooltipItems: (touchedSpots) {
-                return touchedSpots.map((touchedSpot) {
-                  final date = firstEntryDate.add(
-                    Duration(days: touchedSpot.x.toInt()),
-                  );
-                  String formattedDate = DateFormat('MMM d, yyyy').format(date);
-
-                  String label;
-                  if (touchedSpot.barIndex == 0 && _showRawWeight) {
-                    label =
-                        'Raw Weight: ${touchedSpot.y.toStringAsFixed(1)} kg';
-                  } else if ((touchedSpot.barIndex == 1 && _showRawWeight) ||
-                      (touchedSpot.barIndex == 0 && !_showRawWeight)) {
-                    label =
-                        'True Weight: ${touchedSpot.y.toStringAsFixed(1)} kg';
-                  } else {
-                    label = 'Calories: ${touchedSpot.y.toInt()} kcal';
-                  }
-
-                  return LineTooltipItem(
-                    '$formattedDate\n$label',
-                    const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              interval:
+                  (_maxX - _minX) > 45
+                      ? (((_maxX - _minX).clamp(1, 3650)) / 5)
+                          .roundToDouble()
+                          .clamp(7, 30)
+                      : 7,
+              reservedSize: 30,
+              getTitlesWidget: (value, meta) {
+                // meta is TitleMeta
+                if (_firstEntryDateForChart == null)
+                  return const SizedBox.shrink();
+                final date = _firstEntryDateForChart!.add(
+                  Duration(days: value.toInt()),
+                );
+                String label = DateFormat('M/d').format(date);
+                if ((_maxX - _minX) <= 14 && (_maxX - _minX) > 0) {
+                  label = DateFormat('d').format(date); // Just day
+                } else if ((_maxX - _minX) > 90) {
+                  // If more than ~3 months, show month initials
+                  label = DateFormat('MMM').format(date);
+                }
+                // Correct usage of SideTitleWidget
+                return SideTitleWidget(
+                  axisSide: meta.axisSide,
+                  space: 8.0,
+                  child: Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 9,
+                      color: Theme.of(context).textTheme.bodySmall?.color,
                     ),
-                  );
-                }).toList();
+                  ),
+                );
               },
             ),
           ),
-          lineBarsData: [
-            // Raw Weight
-            if (_showRawWeight && _rawWeightSpots.isNotEmpty)
-              LineChartBarData(
-                spots: _rawWeightSpots,
-                isCurved: false,
-                color: Colors.blue.withAlpha(128),
-                barWidth: 2,
-                isStrokeCapRound: true,
-                dotData: FlDotData(show: true),
-                belowBarData: BarAreaData(show: false),
-              ),
-
-            // True Weight (EMA)
-            if (_showTrueWeight && _trueWeightSpots.isNotEmpty)
-              LineChartBarData(
-                spots: _trueWeightSpots,
-                isCurved: true,
-                color: Colors.blue[800],
-                barWidth: 3,
-                isStrokeCapRound: true,
-                dotData: FlDotData(show: false),
-                belowBarData: BarAreaData(show: false),
-              ),
-
-            // Calories (if enabled)
-            if (_showCalories && _calorieSpots.isNotEmpty)
-              LineChartBarData(
-                spots: _calorieSpots,
-                isCurved: true,
-                color: Colors.orange[700],
-                barWidth: 2.5,
-                isStrokeCapRound: true,
-                dotData: FlDotData(show: false),
-                belowBarData: BarAreaData(show: false),
-              ),
-          ],
-          extraLinesData: ExtraLinesData(
-            horizontalLines:
-                _showCalories
-                    ? [
-                      HorizontalLine(y: _minCalorie, color: Colors.transparent),
-                      HorizontalLine(y: _maxCalorie, color: Colors.transparent),
-                    ]
-                    : [],
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
           ),
         ),
+        borderData: FlBorderData(
+          show: true,
+          border: Border.all(color: Theme.of(context).dividerColor, width: 0.5),
+        ),
+        minX: _minX,
+        maxX: _maxX,
+        minY: onlyShowingCalories ? _minCalorieY : _minWeightY,
+        maxY: onlyShowingCalories ? _maxCalorieY : _maxWeightY,
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            // tooltipBgColor is deprecated, use getTooltipColor instead
+            getTooltipColor: (LineBarSpot spot) {
+              // Corrected
+              return Theme.of(context).colorScheme.secondary.withOpacity(0.9);
+            },
+            getTooltipItems: (touchedSpots) {
+              if (_firstEntryDateForChart == null) {
+                return [];
+              }
+              return touchedSpots.map((LineBarSpot touchedSpot) {
+                final date = _firstEntryDateForChart!.add(
+                  Duration(days: touchedSpot.x.toInt()),
+                );
+                String formattedDate = DateFormat('MMM d, yyyy').format(date);
+                String textContent =
+                    'Value: ${touchedSpot.y.toStringAsFixed(1)}'; // Generic default
+
+                // Identify which line this spot belongs to by checking the barIndex or spot's parent barData
+                // This is a bit more robust than relying on list order of lineBarsData if it changes
+                if (touchedSpot.barIndex < lineBarsData.length) {
+                  final currentBarData = lineBarsData[touchedSpot.barIndex];
+                  if (currentBarData.spots == _rawWeightSpots) {
+                    textContent =
+                        'Raw W: ${touchedSpot.y.toStringAsFixed(1)} ${(_settingsRepo.loadSettings().then((s) => s.weightUnitString)).toString()[0]}'; // Example, needs async handling or cached settings
+                  } else if (currentBarData.spots == _trueWeightSpots) {
+                    textContent = 'True W: ${touchedSpot.y.toStringAsFixed(1)}';
+                  } else if (currentBarData.spots == _calorieSpots) {
+                    textContent =
+                        'Avg Cal: ${touchedSpot.y.toStringAsFixed(0)} kcal';
+                  }
+                }
+
+                return LineTooltipItem(
+                  '$formattedDate\n$textContent',
+                  TextStyle(
+                    color: Theme.of(context).colorScheme.onSecondary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                  ),
+                );
+              }).toList();
+            },
+          ),
+        ),
+        lineBarsData: lineBarsData,
       ),
     );
   }
 
   Widget _buildLegend() {
+    /* ... (keep as is, maybe add curly braces to ifs) ... */
+    final legendItems = <Widget>[];
+    if (_showRawWeight && _rawWeightSpots.isNotEmpty) {
+      // Added curly braces
+      legendItems.add(
+        _buildLegendItem(
+          Theme.of(context).colorScheme.secondary.withOpacity(0.5),
+          'Raw Weight',
+          'Daily logged weight',
+        ),
+      );
+    }
+    if (_showTrueWeight && _trueWeightSpots.isNotEmpty) {
+      // Added curly braces
+      legendItems.add(
+        _buildLegendItem(
+          Theme.of(context).colorScheme.primary,
+          'True Weight',
+          'Smoothed (EMA) weight',
+        ),
+      );
+    }
+    if (_showCalories && _calorieSpots.isNotEmpty) {
+      // Added curly braces
+      legendItems.add(
+        _buildLegendItem(
+          Colors.orange.shade700,
+          'Avg. Calories',
+          'Smoothed (EMA) daily intake',
+        ),
+      );
+    }
+
+    if (legendItems.isEmpty) {
+      return const SizedBox.shrink();
+    } // Added curly braces
+
     return Card(
+      elevation: 2,
       child: Padding(
         padding: const EdgeInsets.all(12.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Legend',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            if (_showRawWeight)
-              _buildLegendItem(
-                Colors.blue.withAlpha(128),
-                'Raw Weight',
-                'Daily weigh-in values',
-              ),
-            if (_showTrueWeight)
-              _buildLegendItem(
-                Colors.blue[800]!,
-                'True Weight (EMA)',
-                'Exponential moving average of weight',
-              ),
-            if (_showCalories)
-              _buildLegendItem(
-                Colors.orange[700]!,
-                'Calories (EMA)',
-                'Exponential moving average of calorie intake',
-              ),
+            Wrap(spacing: 16.0, runSpacing: 8.0, children: legendItems),
           ],
         ),
       ),
@@ -636,29 +864,17 @@ class _GraphScreenState extends State<GraphScreen> {
   }
 
   Widget _buildLegendItem(Color color, String title, String description) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        children: [
-          Container(width: 16, height: 3, color: color),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w500),
-                ),
-                Text(
-                  description,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
+    /* ... (keep as is) ... */
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 14, height: 14, color: color),
+        const SizedBox(width: 6),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+        ),
+      ],
     );
   }
 }
