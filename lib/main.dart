@@ -8,11 +8,114 @@ import 'package:validation_app/data/repository/tracker_repository.dart';
 import 'package:validation_app/data/repository/settings_repository.dart';
 import 'package:validation_app/viewmodel/log_input_status_notifier.dart';
 import 'package:validation_app/ui/app_theme.dart';
+import 'package:validation_app/data/database/DatabaseHelper.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
-void main() {
-  // Ensure Flutter is initialized
-  WidgetsFlutterBinding.ensureInitialized();
+/// Application initialization class to manage startup sequence
+class AppInitializer {
+  /// Initialize all required services before app startup
+  static Future<void> initialize() async {
+    // Ensure Flutter binding is initialized first
+    WidgetsFlutterBinding.ensureInitialized();
 
+    // Set preferred orientations
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
+    try {
+      // Initialize shared preferences
+      await SharedPreferences.getInstance();
+      debugPrint('SharedPreferences initialized successfully');
+
+      // Initialize database by accessing it once
+      final db = await DatabaseHelper.instance.database;
+      debugPrint('Database initialized successfully with path: ${db.path}');
+    } catch (e) {
+      debugPrint('Error during initialization: $e');
+      // Forward the error - app will show error UI later
+      rethrow;
+    }
+  }
+}
+
+/// Splash screen shown during initialization
+class SplashScreen extends StatelessWidget {
+  final String? error;
+
+  const SplashScreen({Key? key, this.error}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Weight Tracker Validation App',
+      theme: AppTheme.lightTheme(),
+      darkTheme: AppTheme.darkTheme(),
+      home: Scaffold(
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              // App logo or title
+              const Text(
+                'Weight Tracker',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 24),
+
+              // Show progress indicator if no error, otherwise show error
+              if (error == null)
+                const CircularProgressIndicator()
+              else
+                Column(
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Error during initialization:\n$error',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.red),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () {
+                        // Try to restart the app
+                        main();
+                      },
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void main() async {
+  // Run a simplified app first to show splash screen
+  runApp(const SplashScreen());
+
+  // Initialize app dependencies
+  String? initError;
+  try {
+    await AppInitializer.initialize();
+  } catch (e) {
+    initError = e.toString();
+    // Show error in splash screen but don't crash the app
+    runApp(SplashScreen(error: initError));
+    return;
+  }
+
+  // If initialization was successful, run the full app
   runApp(const ValidationApp());
 }
 
@@ -25,6 +128,14 @@ class ValidationApp extends StatefulWidget {
 
 class _ValidationAppState extends State<ValidationApp> {
   ThemeMode _themeMode = ThemeMode.system;
+  final TrackerRepository _trackerRepository = TrackerRepository();
+
+  @override
+  void dispose() {
+    // Clean up repository resources when app is terminated
+    _trackerRepository.dispose();
+    super.dispose();
+  }
 
   void _toggleTheme() {
     setState(() {
@@ -38,7 +149,7 @@ class _ValidationAppState extends State<ValidationApp> {
     return MultiProvider(
       providers: [
         // Repositories
-        Provider<TrackerRepository>(create: (_) => TrackerRepository()),
+        Provider<TrackerRepository>(create: (_) => _trackerRepository),
         Provider<SettingsRepository>(create: (_) => SettingsRepository()),
 
         // ViewModels
@@ -125,6 +236,7 @@ class _HomeBottomNavBarState extends State<HomeBottomNavBar> {
         // Refresh calculations if returning to home screen
         if (index == 0 && _currentIndex != 0) {
           Future.delayed(const Duration(milliseconds: 100), () {
+            if (!mounted) return;
             context.read<LogInputStatusNotifier>().refreshCalculations();
           });
         }

@@ -16,12 +16,8 @@ class SettingsRepository {
   static const _keySex = 'sex';
   static const _keyActivityLevel = 'activityLevel';
   static const _keyGoalRate = 'goalRate';
-
-  // START OF CHANGES
   static const _keyWeightUnit = 'weightUnit';
   static const _keyHeightUnit = 'heightUnit';
-  // END OF CHANGES
-
   static const _keyWeightAlpha = 'weightAlpha';
   static const _keyWeightAlphaMin = 'weightAlphaMin';
   static const _keyWeightAlphaMax = 'weightAlphaMax';
@@ -33,6 +29,8 @@ class SettingsRepository {
   /// Loads settings, falling back to [UserSettings] defaults if not set.
   Future<UserSettings> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Load user profile data, or use defaults if not set
     final height = prefs.getDouble(_keyHeight) ?? UserSettings().height;
     final age = prefs.getInt(_keyAge) ?? UserSettings().age;
     final sexIndex = prefs.getInt(_keySex) ?? UserSettings().sex.index;
@@ -40,14 +38,13 @@ class SettingsRepository {
         prefs.getInt(_keyActivityLevel) ?? UserSettings().activityLevel.index;
     final goalRate = prefs.getDouble(_keyGoalRate) ?? UserSettings().goalRate;
 
-    // START OF CHANGES
+    // Load unit preferences, or use defaults if not set
     final weightUnitIndex =
         prefs.getInt(_keyWeightUnit) ?? UserSettings().weightUnit.index;
     final heightUnitIndex =
         prefs.getInt(_keyHeightUnit) ?? UserSettings().heightUnit.index;
-    // END OF CHANGES
 
-    // Load algorithm parameters if they exist
+    // Load algorithm parameters, or use defaults if not set
     final weightAlpha =
         prefs.getDouble(_keyWeightAlpha) ?? UserSettings().weightAlpha;
     final weightAlphaMin =
@@ -64,39 +61,68 @@ class SettingsRepository {
         prefs.getInt(_keyTrendSmoothingDays) ??
         UserSettings().trendSmoothingDays;
 
+    // Ensure values are within valid ranges
+    final validWeightUnitIndex = _ensureValidEnumIndex(
+      weightUnitIndex,
+      WeightUnitSystem.values.length,
+    );
+    final validHeightUnitIndex = _ensureValidEnumIndex(
+      heightUnitIndex,
+      HeightUnitSystem.values.length,
+    );
+    final validSexIndex = _ensureValidEnumIndex(
+      sexIndex,
+      BiologicalSex.values.length,
+    );
+    final validActivityIndex = _ensureValidEnumIndex(
+      activityIndex,
+      ActivityLevel.values.length,
+    );
+
     return UserSettings(
       height: height,
       age: age,
-      sex: BiologicalSex.values[sexIndex],
-      activityLevel: ActivityLevel.values[activityIndex],
-      // START OF CHANGES
-      weightUnit: WeightUnitSystem.values[weightUnitIndex],
-      heightUnit: HeightUnitSystem.values[heightUnitIndex],
-      // END OF CHANGES
+      sex: BiologicalSex.values[validSexIndex],
+      activityLevel: ActivityLevel.values[validActivityIndex],
+      weightUnit: WeightUnitSystem.values[validWeightUnitIndex],
+      heightUnit: HeightUnitSystem.values[validHeightUnitIndex],
       goalRate: goalRate,
-      weightAlpha: weightAlpha,
-      weightAlphaMin: weightAlphaMin,
-      weightAlphaMax: weightAlphaMax,
-      calorieAlpha: calorieAlpha,
-      calorieAlphaMin: calorieAlphaMin,
-      calorieAlphaMax: calorieAlphaMax,
-      trendSmoothingDays: trendSmoothingDays,
+      weightAlpha: _constrainValue(weightAlpha, 0.001, 0.999),
+      weightAlphaMin: _constrainValue(weightAlphaMin, 0.001, weightAlphaMax),
+      weightAlphaMax: _constrainValue(weightAlphaMax, weightAlphaMin, 0.999),
+      calorieAlpha: _constrainValue(calorieAlpha, 0.001, 0.999),
+      calorieAlphaMin: _constrainValue(calorieAlphaMin, 0.001, calorieAlphaMax),
+      calorieAlphaMax: _constrainValue(calorieAlphaMax, calorieAlphaMin, 0.999),
+      trendSmoothingDays: _constrainValue(trendSmoothingDays, 1, 30),
     );
+  }
+
+  /// Ensures an enum index is valid by constraining it to the available range
+  int _ensureValidEnumIndex(int index, int length) {
+    return index.clamp(0, length - 1);
+  }
+
+  /// Constrains a value to be within min and max
+  T _constrainValue<T extends num>(T value, T min, T max) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
   }
 
   /// Saves all settings to SharedPreferences
   Future<void> saveSettings(UserSettings settings) async {
     final prefs = await SharedPreferences.getInstance();
+
+    // Save user profile data
     await prefs.setDouble(_keyHeight, settings.height);
     await prefs.setInt(_keyAge, settings.age);
     await prefs.setInt(_keySex, settings.sex.index);
     await prefs.setInt(_keyActivityLevel, settings.activityLevel.index);
     await prefs.setDouble(_keyGoalRate, settings.goalRate);
 
-    // START OF CHANGES
+    // Save unit preferences
     await prefs.setInt(_keyWeightUnit, settings.weightUnit.index);
     await prefs.setInt(_keyHeightUnit, settings.heightUnit.index);
-    // END OF CHANGES
 
     // Save algorithm parameters
     await prefs.setDouble(_keyWeightAlpha, settings.weightAlpha);
@@ -111,10 +137,9 @@ class SettingsRepository {
   /// Resets algorithm parameters to defaults
   Future<void> resetAlgorithmParameters() async {
     final prefs = await SharedPreferences.getInstance();
-    final defaultSettings =
-        UserSettings(); // This will have default units as well
+    final defaultSettings = UserSettings(); // Has default algorithm parameters
 
-    // Keep user profile settings (including units), reset only algorithm parameters
+    // Reset only algorithm parameters, keep user profile and unit settings
     await prefs.setDouble(_keyWeightAlpha, defaultSettings.weightAlpha);
     await prefs.setDouble(_keyWeightAlphaMin, defaultSettings.weightAlphaMin);
     await prefs.setDouble(_keyWeightAlphaMax, defaultSettings.weightAlphaMax);
@@ -127,11 +152,16 @@ class SettingsRepository {
     );
   }
 
-  /// Exports basic log data as CSV string
+  /// Exports basic log data as CSV string with unit information
   Future<String> exportBasicCsv(List<LogEntry> entries) async {
-    // Header row
-    // TODO: Consider adding unit information to the header or as separate columns if needed for import context
-    final csvBuffer = StringBuffer('Date,Weight,PreviousDayCalories\n');
+    final settings = await loadSettings();
+    final weightUnit = settings.weightUnitString;
+
+    // Header row with unit information
+    final csvBuffer = StringBuffer(
+      'Date,Weight (${weightUnit}),PreviousDayCalories (kcal)\n',
+    );
+
     // Sort entries by date (oldest first) before exporting
     final sortedEntries = List<LogEntry>.from(entries)
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -146,42 +176,40 @@ class SettingsRepository {
     return csvBuffer.toString();
   }
 
-  /// Exports detailed log data as JSON string
+  /// Exports detailed log data as JSON string with settings context
   Future<String> exportDetailedJson(
     List<LogEntry> entries,
-    UserSettings settings, // Settings are passed in, good for context
+    UserSettings settings,
   ) async {
     final calculationEngine = CalculationEngine();
     final jsonList = [];
 
-    // Process entries one by one to get historical calculations
+    // Sort entries by date (oldest first) for consistent processing
+    final sortedEntries = List<LogEntry>.from(entries)
+      ..sort((a, b) => a.date.compareTo(b.date));
+
+    // Process entries chronologically to build up calculation history
     List<LogEntry> processedEntries = [];
-    for (int i = 0; i < entries.length; i++) {
-      processedEntries.add(entries[i]);
+    for (int i = 0; i < sortedEntries.length; i++) {
+      processedEntries.add(sortedEntries[i]);
+
+      // Calculate status for this day using all entries up to this point
       final result = await calculationEngine.calculateStatus(
         processedEntries,
-        settings, // Pass current settings for each day's calc context
+        settings,
       );
 
-      // Create JSON object for this day
+      // Create JSON object for this day with all relevant data
       final entryMap = {
-        'Date': entries[i].date,
-        'RawWeight': entries[i].rawWeight,
-        // START OF CHANGES: Add weight unit to export for clarity
-        'WeightUnit':
-            settings.weightUnit
-                .toString()
-                .split('.')
-                .last, // e.g., "kg" or "lbs"
-        // END OF CHANGES
-        'RawPreviousDayCalories': entries[i].rawPreviousDayCalories,
+        'Date': sortedEntries[i].date,
+        'RawWeight': sortedEntries[i].rawWeight,
+        'WeightUnit': settings.weightUnit.toString().split('.').last,
+        'RawPreviousDayCalories': sortedEntries[i].rawPreviousDayCalories,
         'WeightEMA': result.trueWeight > 0 ? result.trueWeight : null,
         'CalorieEMA':
             result.averageCalories > 0 ? result.averageCalories : null,
         'SmoothedTrend_unit_per_week': result.weightTrend,
-        // START OF CHANGES: Clarify trend unit
-        'TrendUnit': settings.weightUnit.toString().split('.').last + '/week',
-        // END OF CHANGES
+        'TrendUnit': '${settings.weightUnit.toString().split('.').last}/week',
         'EstimatedTDEE_Algo':
             result.estimatedTdeeAlgo > 0 ? result.estimatedTdeeAlgo : null,
         'EstimatedTDEE_Standard':
@@ -196,21 +224,23 @@ class SettingsRepository {
                 : null,
         'AlphaWeight_Used': result.currentAlphaWeight,
         'AlphaCalorie_Used': result.currentAlphaCalorie,
-        'GoalRate_Set_for_Day':
-            settings.goalRate, // This uses the settings for the day of export
+        'GoalRate_Set_for_Day': settings.goalRate,
         'TDEE_BlendFactor_Used': result.tdeeBlendFactorUsed,
       };
       jsonList.add(entryMap);
     }
-    // START OF CHANGES: Add settings snapshot to JSON export for full context
+
+    // Include current settings in the export for reference
     final exportData = {
+      'exportDate': DateTime.now().toIso8601String(),
+      'exportAppVersion': '1.0.0', // Add version tracking
       'settingsSnapshot': {
         'height': settings.height,
+        'heightUnit': settings.heightUnit.toString().split('.').last,
         'age': settings.age,
         'sex': settings.sex.toString().split('.').last,
         'activityLevel': settings.activityLevel.toString().split('.').last,
         'weightUnit': settings.weightUnit.toString().split('.').last,
-        'heightUnit': settings.heightUnit.toString().split('.').last,
         'goalRate': settings.goalRate,
         'weightAlpha': settings.weightAlpha,
         'weightAlphaMin': settings.weightAlphaMin,
@@ -222,8 +252,8 @@ class SettingsRepository {
       },
       'logData': jsonList,
     };
+
     return jsonEncode(exportData);
-    // END OF CHANGES
   }
 
   /// Saves export data to a file and returns the file path
@@ -233,7 +263,7 @@ class SettingsRepository {
     String extension,
   ) async {
     try {
-      // Get documents directory
+      // Get documents directory for file storage
       final directory = await getApplicationDocumentsDirectory();
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
       final fileName = '${prefix}_$timestamp.$extension';
@@ -249,12 +279,9 @@ class SettingsRepository {
     }
   }
 
-  /// Imports data from a CSV string
-  /// Returns the number of entries imported
-  /// The `overwriteExisting` parameter is handled by the caller (SettingsScreen)
-  /// This method now focuses on parsing and returning LogEntry list to be processed by caller.
+  /// Parses CSV data into LogEntry objects
+  /// Returns the list of parsed entries for processing by the caller
   Future<List<LogEntry>> parseBasicCsvToLogEntries(String csvData) async {
-    // Renamed from importBasicCsv to reflect its new role
     try {
       final lines = csvData.split('\n');
       if (lines.isEmpty) return [];
@@ -263,7 +290,8 @@ class SettingsRepository {
       int startIndex = 0;
       if (lines[0].toLowerCase().contains('date') &&
           (lines[0].toLowerCase().contains('weight') ||
-              lines[0].toLowerCase().contains('previousdaycalories'))) {
+              lines[0].toLowerCase().contains('previousdaycalories') ||
+              lines[0].toLowerCase().contains('calories'))) {
         startIndex = 1; // Skip header row
       }
 
@@ -273,26 +301,34 @@ class SettingsRepository {
         if (line.isEmpty) continue;
 
         final columns = line.split(',');
-        // Expecting Date,Weight,PreviousDayCalories
-        if (columns.length < 1) continue; // Need at least date
+        // Expecting at least Date column
+        if (columns.length < 1) continue;
 
-        // Parse date
+        // Parse date - require valid format
         final date = columns[0].trim();
-        if (!_isValidDateFormat(date)) continue; // Skip invalid dates
+        if (!_isValidDateFormat(date)) continue;
 
-        // Parse weight (may be empty or not present)
+        // Parse weight - might be empty/null
         double? weight;
         if (columns.length > 1 && columns[1].trim().isNotEmpty) {
           weight = double.tryParse(columns[1].trim());
+          // Ignore nonsensical weight values (negative or extremely high)
+          if (weight != null && (weight <= 0 || weight > 1000)) {
+            weight = null;
+          }
         }
 
-        // Parse calories (may be empty or not present)
+        // Parse calories - might be empty/null
         int? calories;
         if (columns.length > 2 && columns[2].trim().isNotEmpty) {
           calories = int.tryParse(columns[2].trim());
+          // Ignore nonsensical calorie values (negative or extremely high)
+          if (calories != null && (calories < 0 || calories > 10000)) {
+            calories = null;
+          }
         }
 
-        // Create entry
+        // Create and add the entry if it has valid date
         final entry = LogEntry(
           date: date,
           rawWeight: weight,
@@ -300,15 +336,39 @@ class SettingsRepository {
         );
         importedEntries.add(entry);
       }
+
+      // Sort entries by date to ensure chronological order
+      importedEntries.sort((a, b) => a.date.compareTo(b.date));
+
       return importedEntries;
     } catch (e) {
       throw Exception('Error parsing CSV data: $e');
     }
   }
 
+  /// Validates date format (YYYY-MM-DD)
   bool _isValidDateFormat(String date) {
     // Expected format: YYYY-MM-DD
     final pattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
-    return pattern.hasMatch(date);
+    if (!pattern.hasMatch(date)) return false;
+
+    // Further validate as a real date
+    try {
+      final parts = date.split('-');
+      final year = int.parse(parts[0]);
+      final month = int.parse(parts[1]);
+      final day = int.parse(parts[2]);
+
+      if (month < 1 || month > 12) return false;
+      if (day < 1 || day > 31) return false;
+
+      // Simple month length validation (ignoring leap years for simplicity)
+      if ([4, 6, 9, 11].contains(month) && day > 30) return false;
+      if (month == 2 && day > 29) return false;
+
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 }
