@@ -17,7 +17,7 @@ void main() {
 }
 
 class ValidationApp extends StatefulWidget {
-  const ValidationApp({Key? key}) : super(key: key);
+  const ValidationApp({super.key});
 
   @override
   _ValidationAppState createState() => _ValidationAppState();
@@ -85,10 +85,10 @@ class HomeBottomNavBar extends StatefulWidget {
   final String currentTheme;
 
   const HomeBottomNavBar({
-    Key? key,
+    super.key,
     required this.onThemeToggle,
     required this.currentTheme,
-  }) : super(key: key);
+  });
 
   @override
   _HomeBottomNavBarState createState() => _HomeBottomNavBarState();

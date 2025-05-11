@@ -47,8 +47,8 @@ class AppTheme {
         fillColor: Colors.grey.shade50,
       ),
 
-      // Divider theme
-      dividerTheme: const DividerTheme(
+      // Divider theme - fixed to use DividerThemeData
+      dividerTheme: const DividerThemeData(
         color: Colors.black12,
         thickness: 1,
         space: 32,
@@ -113,8 +113,8 @@ class AppTheme {
         fillColor: Colors.grey.shade800,
       ),
 
-      // Divider theme
-      dividerTheme: const DividerTheme(
+      // Divider theme - fixed to use DividerThemeData
+      dividerTheme: const DividerThemeData(
         color: Colors.white24,
         thickness: 1,
         space: 32,

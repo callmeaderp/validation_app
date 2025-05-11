@@ -11,7 +11,7 @@ class GraphScreen extends StatefulWidget {
   const GraphScreen({Key? key}) : super(key: key);
 
   @override
-  _GraphScreenState createState() => _GraphScreenState();
+  State<GraphScreen> createState() => _GraphScreenState();
 }
 
 class _GraphScreenState extends State<GraphScreen> {
@@ -302,7 +302,7 @@ class _GraphScreenState extends State<GraphScreen> {
               borderRadius: BorderRadius.circular(12),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.grey.withOpacity(0.3),
+                  color: Colors.grey.withAlpha(75),
                   spreadRadius: 2,
                   blurRadius: 5,
                   offset: const Offset(0, 3),
@@ -515,9 +515,9 @@ class _GraphScreenState extends State<GraphScreen> {
                   : _trueWeightSpots.last.x,
           minY: _minWeight,
           maxY: _maxWeight,
+          // Simplified touch data without tooltipStyle
           lineTouchData: LineTouchData(
             touchTooltipData: LineTouchTooltipData(
-              tooltipBgColor: Colors.blueGrey.withOpacity(0.8),
               getTooltipItems: (touchedSpots) {
                 return touchedSpots.map((touchedSpot) {
                   final date = firstEntryDate.add(
@@ -554,7 +554,7 @@ class _GraphScreenState extends State<GraphScreen> {
               LineChartBarData(
                 spots: _rawWeightSpots,
                 isCurved: false,
-                color: Colors.blue.withOpacity(0.5),
+                color: Colors.blue.withAlpha(128),
                 barWidth: 2,
                 isStrokeCapRound: true,
                 dotData: FlDotData(show: true),
@@ -595,7 +595,6 @@ class _GraphScreenState extends State<GraphScreen> {
                     : [],
           ),
         ),
-        swapAnimationDuration: const Duration(milliseconds: 250),
       ),
     );
   }
@@ -614,7 +613,7 @@ class _GraphScreenState extends State<GraphScreen> {
             const SizedBox(height: 8),
             if (_showRawWeight)
               _buildLegendItem(
-                Colors.blue.withOpacity(0.5),
+                Colors.blue.withAlpha(128),
                 'Raw Weight',
                 'Daily weigh-in values',
               ),

@@ -5,7 +5,7 @@ import 'package:intl/intl.dart';
 
 /// Main screen for entering daily weight and calories, and viewing calculation results
 class LogInputStatusScreen extends StatefulWidget {
-  const LogInputStatusScreen({Key? key}) : super(key: key);
+  const LogInputStatusScreen({super.key});
 
   @override
   _LogInputStatusScreenState createState() => _LogInputStatusScreenState();

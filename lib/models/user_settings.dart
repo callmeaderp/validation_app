@@ -1,5 +1,6 @@
 /// Shared model for user profile and algorithm parameters
 /// Used by SettingsRepository and CalculationEngine
+library;
 
 enum BiologicalSex { male, female }
 

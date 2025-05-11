@@ -4,7 +4,7 @@ import 'package:validation_app/data/database/log_entry.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
 
 class LogHistoryScreen extends StatefulWidget {
-  const LogHistoryScreen({Key? key}) : super(key: key);
+  const LogHistoryScreen({super.key});
 
   @override
   _LogHistoryScreenState createState() => _LogHistoryScreenState();

@@ -26,8 +26,9 @@ class DatabaseHelper {
 
   // Getter for the database, initializes it lazily if needed
   Future<Database> get database async {
-    if (_database != null)
+    if (_database != null) {
       return _database!; // Return existing instance if available
+    }
     // Lazily instantiate the db the first time it is accessed
     _database = await _initDatabase();
     return _database!;
