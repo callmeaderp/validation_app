@@ -1,3 +1,4 @@
+// lib/ui/settings_screen.dart
 import 'package:flutter/material.dart';
 import 'package:validation_app/models/user_settings.dart';
 import 'package:validation_app/data/repository/settings_repository.dart';
@@ -5,6 +6,8 @@ import 'package:validation_app/data/repository/tracker_repository.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:validation_app/data/database/DatabaseHelper.dart'; // For clearing DB on import
+import 'package:validation_app/data/database/log_entry.dart'; // For LogEntry in import
 
 /// Screen for editing user profile and algorithm settings
 class SettingsScreen extends StatefulWidget {
@@ -23,6 +26,12 @@ class SettingsScreenState extends State<SettingsScreen> {
   ActivityLevel? _activityLevel;
   late TextEditingController _goalRateController;
 
+  // START OF CHANGES: Add state for unit selection
+  WeightUnitSystem? _selectedWeightUnit;
+  HeightUnitSystem? _selectedHeightUnit;
+  String _currentHeightLabel = 'Height'; // Dynamic label
+  // END OF CHANGES
+
   // Algorithm parameters controllers
   late TextEditingController _weightAlphaController;
   late TextEditingController _weightAlphaMinController;
@@ -39,6 +48,8 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   final SettingsRepository _settingsRepo = SettingsRepository();
   final TrackerRepository _trackerRepo = TrackerRepository();
+  final DatabaseHelper _dbHelper =
+      DatabaseHelper.instance; // For direct DB ops during import
 
   @override
   void initState() {
@@ -48,7 +59,6 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _loadSettings() async {
     setState(() => _isLoading = true);
-
     try {
       final settings = await _settingsRepo.loadSettings();
       setState(() {
@@ -64,6 +74,12 @@ class SettingsScreenState extends State<SettingsScreen> {
         _goalRateController = TextEditingController(
           text: settings.goalRate.toString(),
         );
+
+        // START OF CHANGES: Initialize unit selections and height label
+        _selectedWeightUnit = settings.weightUnit;
+        _selectedHeightUnit = settings.heightUnit;
+        _updateHeightLabel(); // Set initial height label
+        // END OF CHANGES
 
         // Algorithm parameters controllers
         _weightAlphaController = TextEditingController(
@@ -99,6 +115,18 @@ class SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  // START OF CHANGES
+  void _updateHeightLabel() {
+    if (_selectedHeightUnit == HeightUnitSystem.cm) {
+      _currentHeightLabel = 'Height (cm)';
+    } else if (_selectedHeightUnit == HeightUnitSystem.ft_in) {
+      _currentHeightLabel = 'Height (total inches for ft/in)';
+    } else {
+      _currentHeightLabel = 'Height';
+    }
+  }
+  // END OF CHANGES
+
   @override
   void dispose() {
     _heightController.dispose();
@@ -117,14 +145,26 @@ class SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() => _isLoading = true);
+    // START OF CHANGES: Ensure units are selected
+    if (_selectedWeightUnit == null || _selectedHeightUnit == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select units before saving.')),
+      );
+      return;
+    }
+    // END OF CHANGES
 
+    setState(() => _isLoading = true);
     try {
       final updated = _settings.copyWith(
         height: double.parse(_heightController.text),
         age: int.parse(_ageController.text),
         sex: _sex,
         activityLevel: _activityLevel,
+        // START OF CHANGES: Save selected units
+        weightUnit: _selectedWeightUnit,
+        heightUnit: _selectedHeightUnit,
+        // END OF CHANGES
         goalRate: double.parse(_goalRateController.text),
         weightAlpha: double.parse(_weightAlphaController.text),
         weightAlphaMin: double.parse(_weightAlphaMinController.text),
@@ -134,7 +174,6 @@ class SettingsScreenState extends State<SettingsScreen> {
         calorieAlphaMax: double.parse(_calorieAlphaMaxController.text),
         trendSmoothingDays: int.parse(_trendSmoothingDaysController.text),
       );
-
       await _settingsRepo.saveSettings(updated);
 
       if (!mounted) return;
@@ -142,9 +181,13 @@ class SettingsScreenState extends State<SettingsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Settings saved successfully')),
       );
-
       setState(() => _isLoading = false);
-      Navigator.of(context).pop();
+      // Optionally pop or inform LogInputStatusNotifier to refresh
+      if (Navigator.canPop(context)) {
+        Navigator.of(
+          context,
+        ).pop(true); // Pass true to indicate settings changed
+      }
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -160,7 +203,7 @@ class SettingsScreenState extends State<SettingsScreen> {
           (context) => AlertDialog(
             title: const Text('Reset Algorithm Parameters?'),
             content: const Text(
-              'This will reset all algorithm parameters to their default values. Your profile settings will not be affected. This action cannot be undone.',
+              'This will reset all algorithm parameters to their default values. Your profile and unit settings will not be affected. This action cannot be undone.',
             ),
             actions: [
               TextButton(
@@ -171,19 +214,19 @@ class SettingsScreenState extends State<SettingsScreen> {
                 onPressed: () async {
                   Navigator.pop(context);
                   setState(() => _isLoading = true);
-
                   try {
                     await _settingsRepo.resetAlgorithmParameters();
-                    await _loadSettings(); // Reload settings with defaults
-
+                    // Reload all settings to reflect changes in UI,
+                    // including potentially algorithm params if they were linked to UserSettings defaults
+                    await _loadSettings();
                     if (!mounted) return;
-
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
                         content: Text('Algorithm parameters reset to defaults'),
                       ),
                     );
                   } catch (e) {
+                    if (!mounted) return;
                     setState(() {
                       _isLoading = false;
                       _errorMessage = 'Error resetting parameters: $e';
@@ -199,36 +242,25 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportBasicCsv() async {
     setState(() => _isExporting = true);
-
     try {
-      // Get log entries
       final entries = await _trackerRepo.getAllLogEntriesOldestFirst();
-
       if (entries.isEmpty) {
         setState(() => _isExporting = false);
         if (!mounted) return;
-
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('No data to export')));
         return;
       }
-
-      // Generate CSV
       final csvData = await _settingsRepo.exportBasicCsv(entries);
-
-      // Save to file
       final filePath = await _settingsRepo.saveExportToFile(
         csvData,
         'weight_tracker_basic',
         'csv',
       );
-
-      // Share file
       await Share.shareXFiles([
         XFile(filePath),
       ], text: 'Weight Tracker Basic Export');
-
       setState(() => _isExporting = false);
     } catch (e) {
       setState(() {
@@ -240,40 +272,32 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _exportDetailedJson() async {
     setState(() => _isExporting = true);
-
     try {
-      // Get log entries and settings
       final entries = await _trackerRepo.getAllLogEntriesOldestFirst();
-      final settings = await _settingsRepo.loadSettings();
+      final currentSettings =
+          await _settingsRepo
+              .loadSettings(); // Load current settings for export
 
       if (entries.isEmpty) {
         setState(() => _isExporting = false);
         if (!mounted) return;
-
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('No data to export')));
         return;
       }
-
-      // Generate JSON
       final jsonData = await _settingsRepo.exportDetailedJson(
         entries,
-        settings,
+        currentSettings,
       );
-
-      // Save to file
       final filePath = await _settingsRepo.saveExportToFile(
         jsonData,
         'weight_tracker_detailed',
         'json',
       );
-
-      // Share file
       await Share.shareXFiles([
         XFile(filePath),
       ], text: 'Weight Tracker Detailed Export');
-
       setState(() => _isExporting = false);
     } catch (e) {
       setState(() {
@@ -285,41 +309,45 @@ class SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _importCsv() async {
     setState(() => _isImporting = true);
-
     try {
-      // Pick file
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['csv'],
       );
-
       if (result == null || result.files.isEmpty) {
         setState(() => _isImporting = false);
         return;
       }
-
       String? filePath = result.files.single.path;
       if (filePath == null) {
         setState(() => _isImporting = false);
         return;
       }
-
-      // Read file content
       final file = File(filePath);
       final csvData = await file.readAsString();
 
-      // Show confirmation dialog
       if (!mounted) return;
+      // Get parsed entries first
+      final List<LogEntry> importedEntries = await _settingsRepo
+          .parseBasicCsvToLogEntries(csvData);
+
+      if (importedEntries.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No valid entries found in CSV file.')),
+        );
+        setState(() => _isImporting = false);
+        return;
+      }
 
       showDialog(
         context: context,
         builder:
             (context) => AlertDialog(
               title: const Text('Import Data'),
-              content: const Text(
-                'How should duplicate entries be handled?\n\n'
-                'Skip: Keep existing entries\n'
-                'Overwrite: Replace existing entries with imported data',
+              content: Text(
+                'Found ${importedEntries.length} entries to import. How should duplicate entries (by date) be handled?\n\n'
+                'Skip: Keep existing entries.\n'
+                'Overwrite: Replace existing entries with imported data.',
               ),
               actions: [
                 TextButton(
@@ -332,14 +360,20 @@ class SettingsScreenState extends State<SettingsScreen> {
                 TextButton(
                   onPressed: () async {
                     Navigator.pop(context);
-                    _processImport(csvData, overwriteExisting: false);
+                    await _processImport(
+                      importedEntries,
+                      overwriteExisting: false,
+                    );
                   },
                   child: const Text('Skip'),
                 ),
                 TextButton(
                   onPressed: () async {
                     Navigator.pop(context);
-                    _processImport(csvData, overwriteExisting: true);
+                    await _processImport(
+                      importedEntries,
+                      overwriteExisting: true,
+                    );
                   },
                   child: const Text('Overwrite'),
                 ),
@@ -355,20 +389,50 @@ class SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _processImport(
-    String csvData, {
+    List<LogEntry> entriesToImport, {
     required bool overwriteExisting,
   }) async {
+    setState(() => _isImporting = true);
+    int importedCount = 0;
+    int skippedCount = 0;
     try {
-      final importedCount = await _settingsRepo.importBasicCsv(csvData);
-
+      for (final entry in entriesToImport) {
+        if (overwriteExisting) {
+          await _dbHelper.insertOrUpdateLogEntry(
+            entry,
+          ); // Uses ConflictAlgorithm.replace
+          importedCount++;
+        } else {
+          // Try to insert, if it fails (due to date conflict), it means entry exists
+          try {
+            // Attempt to insert with ConflictAlgorithm.abort to check existence
+            // A more direct way is to query first.
+            final existing = await _dbHelper.getLogEntry(entry.date);
+            if (existing == null) {
+              await _dbHelper.insertOrUpdateLogEntry(entry); // Insert new
+              importedCount++;
+            } else {
+              skippedCount++; // Entry exists, skip
+            }
+          } catch (e) {
+            // This catch might be for general DB errors, not just conflicts
+            // depending on how insertOrUpdate is configured without replace.
+            // For simplicity, we assume getLogEntry is reliable.
+            skippedCount++;
+          }
+        }
+      }
       if (!mounted) return;
-
       setState(() => _isImporting = false);
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Imported $importedCount entries')),
+        SnackBar(
+          content: Text(
+            'Import complete. Imported: $importedCount, Skipped: $skippedCount',
+          ),
+        ),
       );
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isImporting = false;
         _errorMessage = 'Error processing import: $e';
@@ -379,7 +443,10 @@ class SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return Scaffold(
+        appBar: AppBar(title: const Text('Settings')),
+        body: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     return Scaffold(
@@ -421,6 +488,10 @@ class SettingsScreenState extends State<SettingsScreen> {
         children: [
           _buildProfileSection(),
           const Divider(height: 32),
+          // START OF CHANGES: Add Units Section
+          _buildUnitsSection(),
+          const Divider(height: 32),
+          // END OF CHANGES
           _buildAlgorithmSection(),
           const Divider(height: 32),
           _buildDataManagementSection(),
@@ -446,10 +517,16 @@ class SettingsScreenState extends State<SettingsScreen> {
         const SizedBox(height: 16),
         TextFormField(
           controller: _heightController,
-          decoration: const InputDecoration(
-            labelText: 'Height (cm)',
-            border: OutlineInputBorder(),
+          // START OF CHANGES: Dynamic height label
+          decoration: InputDecoration(
+            labelText: _currentHeightLabel, // Use dynamic label
+            border: const OutlineInputBorder(),
+            helperText:
+                _selectedHeightUnit == HeightUnitSystem.ft_in
+                    ? 'e.g., for 5ft 10in, enter 70' // Helper text for inches
+                    : 'Enter height',
           ),
+          // END OF CHANGES
           keyboardType: TextInputType.number,
           validator: (v) => v == null || v.isEmpty ? 'Required' : null,
         ),
@@ -514,6 +591,75 @@ class SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // START OF CHANGES: New section for unit settings
+  Widget _buildUnitsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Units',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<WeightUnitSystem>(
+          value: _selectedWeightUnit,
+          decoration: const InputDecoration(
+            labelText: 'Weight Unit',
+            border: OutlineInputBorder(),
+          ),
+          items:
+              WeightUnitSystem.values.map((unit) {
+                String text;
+                switch (unit) {
+                  case WeightUnitSystem.kg:
+                    text = 'Kilograms (kg)';
+                    break;
+                  case WeightUnitSystem.lbs:
+                    text = 'Pounds (lbs)';
+                    break;
+                }
+                return DropdownMenuItem(value: unit, child: Text(text));
+              }).toList(),
+          onChanged: (newValue) {
+            setState(() {
+              _selectedWeightUnit = newValue;
+            });
+          },
+          validator: (v) => v == null ? 'Required' : null,
+        ),
+        const SizedBox(height: 16),
+        DropdownButtonFormField<HeightUnitSystem>(
+          value: _selectedHeightUnit,
+          decoration: const InputDecoration(
+            labelText: 'Height Unit',
+            border: OutlineInputBorder(),
+          ),
+          items:
+              HeightUnitSystem.values.map((unit) {
+                String text;
+                switch (unit) {
+                  case HeightUnitSystem.cm:
+                    text = 'Centimeters (cm)';
+                    break;
+                  case HeightUnitSystem.ft_in:
+                    text = 'Feet/Inches (ft/in)';
+                    break;
+                }
+                return DropdownMenuItem(value: unit, child: Text(text));
+              }).toList(),
+          onChanged: (newValue) {
+            setState(() {
+              _selectedHeightUnit = newValue;
+              _updateHeightLabel(); // Update label when height unit changes
+            });
+          },
+          validator: (v) => v == null ? 'Required' : null,
+        ),
+      ],
+    );
+  }
+  // END OF CHANGES
+
   Widget _buildAlgorithmSection() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -537,8 +683,6 @@ class SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(color: Colors.orange, fontStyle: FontStyle.italic),
         ),
         const SizedBox(height: 16),
-
-        // Weight Alpha parameters
         const Text(
           'Weight Smoothing Factor (Alpha)',
           style: TextStyle(fontWeight: FontWeight.w500),
@@ -564,7 +708,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
                   return null;
                 },
               ),
@@ -584,7 +728,8 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
+                  // TODO: Add validation: min < current < max
                   return null;
                 },
               ),
@@ -604,7 +749,8 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
+                  // TODO: Add validation: min < current < max
                   return null;
                 },
               ),
@@ -612,8 +758,6 @@ class SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
         const SizedBox(height: 16),
-
-        // Calorie Alpha parameters
         const Text(
           'Calorie Smoothing Factor (Alpha)',
           style: TextStyle(fontWeight: FontWeight.w500),
@@ -639,7 +783,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
                   return null;
                 },
               ),
@@ -659,7 +803,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
                   return null;
                 },
               ),
@@ -679,7 +823,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                   if (v == null || v.isEmpty) return 'Required';
                   final value = double.tryParse(v);
                   if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be between 0-1';
+                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
                   return null;
                 },
               ),
@@ -687,8 +831,6 @@ class SettingsScreenState extends State<SettingsScreen> {
           ],
         ),
         const SizedBox(height: 16),
-
-        // Trend Smoothing Days
         TextFormField(
           controller: _trendSmoothingDaysController,
           decoration: const InputDecoration(
@@ -719,8 +861,6 @@ class SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 16),
-
-        // Export options
         const Text(
           'Export Data',
           style: TextStyle(fontWeight: FontWeight.w500),
@@ -751,8 +891,6 @@ class SettingsScreenState extends State<SettingsScreen> {
             child: LinearProgressIndicator(),
           ),
         const SizedBox(height: 16),
-
-        // Import options
         const Text(
           'Import Data',
           style: TextStyle(fontWeight: FontWeight.w500),

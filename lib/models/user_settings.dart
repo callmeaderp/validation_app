@@ -1,3 +1,5 @@
+// lib/models/user_settings.dart
+
 /// Shared model for user profile and algorithm parameters
 /// Used by SettingsRepository and CalculationEngine
 library;
@@ -12,12 +14,24 @@ enum ActivityLevel {
   extraActive,
 }
 
+// START OF CHANGES
+enum WeightUnitSystem { kg, lbs }
+
+enum HeightUnitSystem { cm, ft_in }
+// END OF CHANGES
+
 class UserSettings {
   /// Profile
-  final double height; // in cm or inches based on units setting
+  final double height;
   final int age;
   final BiologicalSex sex;
   final ActivityLevel activityLevel;
+
+  // START OF CHANGES
+  /// Unit Preferences
+  final WeightUnitSystem weightUnit;
+  final HeightUnitSystem heightUnit;
+  // END OF CHANGES
 
   /// Goal
   final double goalRate; // e.g. percentage per week or lbs per week
@@ -32,10 +46,15 @@ class UserSettings {
   final int trendSmoothingDays;
 
   UserSettings({
-    this.height = 170.0,
+    this.height =
+        170.0, // Default height unit will correspond to default heightUnit (cm)
     this.age = 30,
     this.sex = BiologicalSex.male,
     this.activityLevel = ActivityLevel.lightlyActive,
+    // START OF CHANGES
+    this.weightUnit = WeightUnitSystem.kg, // Default to kg
+    this.heightUnit = HeightUnitSystem.cm, // Default to cm
+    // END OF CHANGES
     this.goalRate = 0.0,
     this.weightAlpha = 0.1,
     this.weightAlphaMin = 0.05,
@@ -51,6 +70,10 @@ class UserSettings {
     int? age,
     BiologicalSex? sex,
     ActivityLevel? activityLevel,
+    // START OF CHANGES
+    WeightUnitSystem? weightUnit,
+    HeightUnitSystem? heightUnit,
+    // END OF CHANGES
     double? goalRate,
     double? weightAlpha,
     double? weightAlphaMin,
@@ -65,6 +88,10 @@ class UserSettings {
       age: age ?? this.age,
       sex: sex ?? this.sex,
       activityLevel: activityLevel ?? this.activityLevel,
+      // START OF CHANGES
+      weightUnit: weightUnit ?? this.weightUnit,
+      heightUnit: heightUnit ?? this.heightUnit,
+      // END OF CHANGES
       goalRate: goalRate ?? this.goalRate,
       weightAlpha: weightAlpha ?? this.weightAlpha,
       weightAlphaMin: weightAlphaMin ?? this.weightAlphaMin,
@@ -75,4 +102,12 @@ class UserSettings {
       trendSmoothingDays: trendSmoothingDays ?? this.trendSmoothingDays,
     );
   }
+
+  // START OF CHANGES
+  // Helper to get a string representation for display
+  String get weightUnitString =>
+      weightUnit == WeightUnitSystem.kg ? 'kg' : 'lbs';
+  String get heightUnitString =>
+      heightUnit == HeightUnitSystem.cm ? 'cm' : 'ft/in';
+  // END OF CHANGES
 }

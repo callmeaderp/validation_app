@@ -1,3 +1,4 @@
+// lib/calculation/calculation_engine.dart
 import 'dart:math';
 import 'package:validation_app/models/user_settings.dart';
 import 'package:validation_app/data/database/log_entry.dart';
@@ -38,10 +39,18 @@ class CalculationEngine {
   // Constants
   static const double _energyEquivalentPerLb = 3500.0;
   static const double _energyEquivalentPerKg = 7700.0;
-  static const int _trendSmoothingDays = 7;
+  static const int _trendSmoothingDays =
+      7; // Default, should come from settings
   static const double _initialTdeeBlendDecayFactor = 0.85;
   static const int _tdeeBlendDurationDays = 21; // Approx 3 weeks
   static const int _minDaysForTrend = 5;
+
+  // START OF CHANGES: Constants for conversions
+  static const double _lbsPerKg = 2.20462;
+  static const double _kgPerLb = 1 / _lbsPerKg;
+  static const double _cmPerInch = 2.54;
+  static const double _inchesPerFoot = 12.0;
+  // END OF CHANGES
 
   /// Runs the full calculation given historical entries and user settings.
   Future<CalculationResult> calculateStatus(
@@ -50,22 +59,33 @@ class CalculationEngine {
   ) async {
     if (history.isEmpty) {
       // Not enough data to calculate anything meaningful
+      // Calculate standard TDEE even with no history, using profile data (weight 0)
+      final standardTdeeInitial = _calculateStandardTdee(settings, 0.0);
+      // Target calories would also be based on this potentially zero TDEE
+      // and a goal rate, which might not be meaningful.
+      // For an empty history, target can also be 0 or based on standard TDEE.
+      final targetDeficitOrSurplusPerDay =
+          (settings.goalRate / 100.0) *
+          0.0 *
+          (_getEnergyEquivalent(settings) / 7.0); // Based on 0 weight
+      final targetStandardInitial =
+          standardTdeeInitial - targetDeficitOrSurplusPerDay;
+
       return CalculationResult(
         trueWeight: 0.0,
         weightTrend: 0.0,
         averageCalories: 0.0,
-        estimatedTdeeAlgo: 0.0,
-        targetCaloriesAlgo: 0.0,
-        estimatedTdeeStandard: _calculateStandardTdee(
-          settings,
-          0.0,
-        ), // Use 0 for current weight if no history
-        targetCaloriesStandard: 0.0,
-        deltaTdee: 0.0,
+        estimatedTdeeAlgo: 0.0, // No data for algo TDEE
+        targetCaloriesAlgo: 0.0, // No data for algo target
+        estimatedTdeeStandard: standardTdeeInitial,
+        targetCaloriesStandard:
+            targetStandardInitial > 0 ? targetStandardInitial : 0.0,
+        deltaTdee: 0.0, // Algo TDEE is 0, standard TDEE might be calculated
         deltaTarget: 0.0,
         currentAlphaWeight: settings.weightAlpha,
         currentAlphaCalorie: settings.calorieAlpha,
-        tdeeBlendFactorUsed: 1.0,
+        tdeeBlendFactorUsed:
+            1.0, // Effectively using 100% standard if algo TDEE is 0
       );
     }
 
@@ -100,16 +120,18 @@ class CalculationEngine {
                     previousWeightEma) *
                 100.0;
             relativePredictionErrors.add(error);
-            if (relativePredictionErrors.length > _trendSmoothingDays) {
-              relativePredictionErrors.removeAt(0); // Keep only last 7
+            if (relativePredictionErrors.length > settings.trendSmoothingDays) {
+              // Use setting
+              relativePredictionErrors.removeAt(0);
             }
           }
 
           // Adjust alpha_weight
-          if (relativePredictionErrors.length == _trendSmoothingDays) {
+          if (relativePredictionErrors.length == settings.trendSmoothingDays) {
+            // Use setting
             double avgRelError =
                 relativePredictionErrors.reduce((a, b) => a + b) /
-                _trendSmoothingDays;
+                settings.trendSmoothingDays; // Use setting
             if (avgRelError < 0.25) {
               currentWeightAlpha = min(
                 settings.weightAlphaMax,
@@ -139,7 +161,7 @@ class CalculationEngine {
     double previousCalorieEma = 0.0;
     List<int> recentCaloriesForCv = [];
     int missingDaysInWindow = 0;
-    int calorieWindowSize = 10;
+    int calorieWindowSize = 10; // As per blueprint for CV calc
 
     for (int i = 0; i < rawCalories.length; i++) {
       double currentCalorieEma;
@@ -147,29 +169,40 @@ class CalculationEngine {
         currentCalorieEma = (rawCalories[i] ?? 0).toDouble(); // Seed
       } else {
         if (rawCalories[i] != null) {
-          // Update recent calories for CV calculation
           recentCaloriesForCv.add(rawCalories[i]!);
           if (recentCaloriesForCv.length > calorieWindowSize) {
             recentCaloriesForCv.removeAt(0);
           }
-          // Update missing days count (simplified: assumes current day is NOT missing if rawCalories[i] is not null)
-          // A more robust approach would be to check the actual dates if available
-          if (i >= calorieWindowSize) {
+
+          int startSublist = max(
+            0,
+            i - calorieWindowSize + 1,
+          ); // ensure non-negative
+          if (i + 1 >= calorieWindowSize) {
+            // check if current index i is part of a full window
             missingDaysInWindow =
                 rawCalories
-                    .sublist(i - calorieWindowSize, i)
+                    .sublist(
+                      startSublist,
+                      i + 1,
+                    ) // sublist up to current index i
                     .where((c) => c == null)
                     .length;
           } else {
+            // if not a full window yet (less than 10 days of data)
             missingDaysInWindow =
-                rawCalories.sublist(0, i).where((c) => c == null).length;
+                rawCalories
+                    .sublist(
+                      0,
+                      i + 1,
+                    ) // sublist from beginning up to current index i
+                    .where((c) => c == null)
+                    .length;
           }
 
-          // Adjust alpha_calorie
           if (recentCaloriesForCv.length >=
-                  calorieWindowSize - missingDaysInWindow &&
+                  (calorieWindowSize - missingDaysInWindow) &&
               recentCaloriesForCv.isNotEmpty) {
-            // Ensure enough data for CV
             double mean =
                 recentCaloriesForCv.reduce((a, b) => a + b) /
                 recentCaloriesForCv.length;
@@ -182,11 +215,7 @@ class CalculationEngine {
                     (recentCaloriesForCv.length - 1),
               );
             }
-            double cv =
-                (mean == 0)
-                    ? 1.0
-                    : (stdDev /
-                        mean); // Handle mean == 0 to avoid division by zero; treat as high variance.
+            double cv = (mean == 0) ? 1.0 : (stdDev / mean);
             double missingPercent =
                 (calorieWindowSize == 0)
                     ? 0.0
@@ -222,12 +251,10 @@ class CalculationEngine {
       if (i == 0) {
         dailyWeightDeltaHistory.add(0.0); // No delta for the first day
       } else {
-        // Basic outlier detection for daily delta (e.g. >5% of bodyweight change in a day is unlikely)
         double delta = weightEmaHistory[i] - weightEmaHistory[i - 1];
         if (weightEmaHistory[i - 1] != 0 &&
             (delta.abs() / weightEmaHistory[i - 1]).abs() > 0.05) {
-          // If delta is an extreme outlier, dampen it or use 0. For simplicity, using 0.
-          dailyWeightDeltaHistory.add(0.0);
+          dailyWeightDeltaHistory.add(0.0); // Dampen extreme outlier
         } else {
           dailyWeightDeltaHistory.add(delta);
         }
@@ -251,36 +278,26 @@ class CalculationEngine {
     double finalWeightTrendPerWeek = finalWeightTrendPerDay * 7;
 
     // --- 4. TDEE Estimation (Algorithm) ---
-    double energyEquivalent = _getEnergyEquivalent(
-      settings,
-    ); // Based on lbs/kg unit
+    double energyEquivalent = _getEnergyEquivalent(settings);
     double estimatedTdeeAlgo = 0.0;
 
     if (calorieEmaHistory.isNotEmpty &&
         weightEmaHistory.length >= _minDaysForTrend) {
-      // Only calculate TDEE if there's a meaningful calorie EMA and enough weight data for a trend
       double lastCalorieEma = calorieEmaHistory.last;
       estimatedTdeeAlgo =
           lastCalorieEma - (energyEquivalent * finalWeightTrendPerDay);
-
-      // Basic plausibility check for TDEE
       if (estimatedTdeeAlgo < 500 || estimatedTdeeAlgo > 7000) {
-        // If TDEE is implausible, try to use previous day's TDEE or a fallback
         if (tdeeAlgoHistory.isNotEmpty &&
             tdeeAlgoHistory.last > 500 &&
             tdeeAlgoHistory.last < 7000) {
           estimatedTdeeAlgo = tdeeAlgoHistory.last;
         } else {
-          estimatedTdeeAlgo = _calculateStandardTdee(
-            settings,
-            finalTrueWeight,
-          ); // Fallback to standard
+          estimatedTdeeAlgo = _calculateStandardTdee(settings, finalTrueWeight);
         }
       }
       tdeeAlgoHistory.add(estimatedTdeeAlgo);
     } else if (tdeeAlgoHistory.isNotEmpty) {
-      estimatedTdeeAlgo =
-          tdeeAlgoHistory.last; // Carry forward if cannot calculate today
+      estimatedTdeeAlgo = tdeeAlgoHistory.last; // Carry forward
     } else {
       estimatedTdeeAlgo = _calculateStandardTdee(
         settings,
@@ -290,7 +307,7 @@ class CalculationEngine {
     }
 
     // --- TDEE Blending (Initial Phase) ---
-    double tdeeBlendFactor = 1.0; // Weight for formula TDEE
+    double tdeeBlendFactor = 1.0;
     if (history.length < _tdeeBlendDurationDays &&
         history.length >= _minDaysForTrend) {
       tdeeBlendFactor =
@@ -298,9 +315,7 @@ class CalculationEngine {
             _initialTdeeBlendDecayFactor,
             history.length - _minDaysForTrend,
           ).toDouble();
-      // Ensure blend factor doesn't become too small or negative
       tdeeBlendFactor = max(0.0, min(1.0, tdeeBlendFactor));
-
       double standardTdeeForBlend = _calculateStandardTdee(
         settings,
         finalTrueWeight,
@@ -311,23 +326,20 @@ class CalculationEngine {
     } else if (history.length >= _tdeeBlendDurationDays) {
       tdeeBlendFactor = 0.0; // Fully data-driven
     }
-    // If less than _minDaysForTrend, estimatedTdeeAlgo is already standardTdee, so blendFactor effectively 1.0
+    // If less than _minDaysForTrend, estimatedTdeeAlgo is already standardTdee via fallback
 
     double finalEstimatedTdeeAlgo = estimatedTdeeAlgo;
 
     // --- 5. Calorie Target Recommendation (Algorithm) ---
-    // Goal rate is % of current true weight per week
     double targetDeficitOrSurplusPerDay = 0;
     if (finalTrueWeight > 0) {
-      // Avoid division by zero if true weight is somehow 0
       targetDeficitOrSurplusPerDay =
           (settings.goalRate / 100.0) *
           finalTrueWeight *
           (energyEquivalent / 7.0);
     }
     double targetCaloriesAlgo =
-        finalEstimatedTdeeAlgo -
-        targetDeficitOrSurplusPerDay; // Subtract deficit, add surplus for goal rate logic
+        finalEstimatedTdeeAlgo - targetDeficitOrSurplusPerDay;
 
     // --- Standard Formula Calculations (Mifflin-St Jeor for diagnostics) ---
     double estimatedTdeeStandard = _calculateStandardTdee(
@@ -335,8 +347,7 @@ class CalculationEngine {
       finalTrueWeight,
     );
     double targetCaloriesStandard =
-        estimatedTdeeStandard -
-        targetDeficitOrSurplusPerDay; // Use same deficit/surplus for fair comparison
+        estimatedTdeeStandard - targetDeficitOrSurplusPerDay;
 
     // --- Deltas ---
     double deltaTdee = finalEstimatedTdeeAlgo - estimatedTdeeStandard;
@@ -359,67 +370,63 @@ class CalculationEngine {
   }
 
   double _getEnergyEquivalent(UserSettings settings) {
-    // Assuming settings will have a unit system preference in the future.
-    // For now, hardcoding to a common scenario or requiring it in UserSettings.
-    // Let's assume goalRate is always % of body weight, and we need to determine if user uses lbs or kg.
-    // This is a simplification. A robust app would have explicit unit settings.
-    // For the validation app, we might assume one unit or make it part of UserSettings if not already.
-    // Based on blueprint, user can set lbs/kg in settings.
-    // We need a way to know which unit the current 'trueWeight' is in to apply the correct energyEquivalent.
-    // For this implementation, let's assume UserSettings has a field like `WeightUnitSystem (enum {lbs, kg})`
-    // If not, we'll default to one, e.g., kg, as it's more standard in many places.
-    // The blueprint mentions "Units: Weight (lbs/kg)" in settings [cite: 208]
-
-    // TODO: Properly get this from UserSettings. For now, assuming 'kg' if not specified.
-    // For the validation app, it might be simpler to just pick one (e.g. kg) or
-    // ensure the UserSettings passed in has this preference.
-    // Given the prompt, UserSettings doesn't explicitly have a unit system field yet for direct use here.
-    // Let's assume the 'goalRate' is tied to the units of 'trueWeight' and 'energyEquivalent'.
-    // The blueprint specifies `EnergyEquivalent is approx. 3500 kcal per pound or 7700 kcal per kg` [cite: 105]
-    // We need a way to determine which one to use.
-    // For simplicity, if settings.height is > 100 it's likely cm (so kg is likely weight unit).
-    // If height is < 10, it's likely ft (so lbs is likely weight unit). This is a heuristic.
-    bool useKg = true; // Default
-    if (settings.height < 10) {
-      // Assuming height in feet implies weight in lbs
-      useKg = false;
+    // START OF CHANGES: Use explicit unit setting
+    if (settings.weightUnit == WeightUnitSystem.lbs) {
+      return _energyEquivalentPerLb;
+    } else {
+      // Default or kg
+      return _energyEquivalentPerKg;
     }
-    // A better way would be an explicit UserSettings.weightUnit property.
-    return useKg ? _energyEquivalentPerKg : _energyEquivalentPerLb;
+    // END OF CHANGES
   }
 
   /// Calculates TDEE using Mifflin-St Jeor formula.
+  /// `currentWeight` is assumed to be in the unit specified by `settings.weightUnit`.
   double _calculateStandardTdee(UserSettings settings, double currentWeight) {
-    if (currentWeight <= 0) return 0.0; // Cannot calculate with no weight
+    if (currentWeight <= 0 && settings.height <= 0)
+      return 0.0; // Cannot calculate with no weight or height
+
+    double weightInKg;
+    double heightInCm;
+
+    // START OF CHANGES: Convert weight and height based on explicit unit settings
+    // Convert currentWeight to KG for the formula
+    if (settings.weightUnit == WeightUnitSystem.lbs) {
+      weightInKg = currentWeight * _kgPerLb;
+    } else {
+      // Already in KG or default
+      weightInKg = currentWeight;
+    }
+    if (currentWeight <= 0)
+      weightInKg = 0; // Ensure non-negative for formula after conversion
+
+    // Convert settings.height to CM for the formula
+    if (settings.heightUnit == HeightUnitSystem.ft_in) {
+      // Assuming settings.height stores total inches if ft_in is selected
+      // e.g., 5 feet 6 inches = 66 inches.
+      // A more complex setup might involve separate feet and inches fields.
+      heightInCm = settings.height * _cmPerInch;
+    } else {
+      // Already in CM or default
+      heightInCm = settings.height;
+    }
+    if (settings.height <= 0) heightInCm = 0; // Ensure non-negative
+    // END OF CHANGES
+
+    // If after conversion, weight or height is still not positive, BMR part of formula might be weird.
+    // Return 0 if critical values are not positive.
+    if (weightInKg <= 0 && heightInCm <= 0 && settings.age <= 0) return 0.0;
+    // Allow calculation if at least one stat is positive, formula handles 0s for others.
 
     double bmr;
-    // Convert height to cm if necessary (assuming height in settings is always stored in a consistent unit, e.g. cm for calculations)
-    // The blueprint states "Units: Weight (lbs/kg), Height (ft+in/cm)" [cite: 208]
-    // This means settings.height could be in cm or a value representing ft+in.
-    // For Mifflin-St Jeor, height needs to be in cm and weight in kg.
-    // We need robust unit conversion here.
-
-    double weightInKg = currentWeight;
-    double heightInCm = settings.height;
-
-    // Heuristic: if height is small (e.g. < 10), assume it's feet and convert.
-    // A proper implementation would have units stored with the values or explicit conversion settings.
-    bool isImperial = settings.height < 10; // Very rough heuristic
-
-    if (isImperial) {
-      // Assume currentWeight is lbs, settings.height is ft
-      weightInKg = currentWeight * 0.453592;
-      // Assume settings.height is just feet for simplicity here, no inches.
-      // A full implementation would parse ft and inches.
-      heightInCm = settings.height * 30.48;
-    }
-    // If not "isImperial" by this heuristic, assume weightInKg is already kg and heightInCm is already cm.
-
     if (settings.sex == BiologicalSex.male) {
       bmr = (10 * weightInKg) + (6.25 * heightInCm) - (5 * settings.age) + 5;
     } else {
+      // female
       bmr = (10 * weightInKg) + (6.25 * heightInCm) - (5 * settings.age) - 161;
     }
+    // Ensure BMR is not negative if inputs are very small or age is very high.
+    if (bmr < 0) bmr = 0;
 
     double activityMultiplier;
     switch (settings.activityLevel) {
@@ -439,7 +446,7 @@ class CalculationEngine {
         activityMultiplier = 1.9;
         break;
       default:
-        activityMultiplier = 1.2;
+        activityMultiplier = 1.2; // Should not happen if settings are valid
     }
     return bmr * activityMultiplier;
   }

@@ -1,3 +1,4 @@
+// lib/data/repository/settings_repository.dart
 import 'dart:async';
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -16,6 +17,11 @@ class SettingsRepository {
   static const _keyActivityLevel = 'activityLevel';
   static const _keyGoalRate = 'goalRate';
 
+  // START OF CHANGES
+  static const _keyWeightUnit = 'weightUnit';
+  static const _keyHeightUnit = 'heightUnit';
+  // END OF CHANGES
+
   static const _keyWeightAlpha = 'weightAlpha';
   static const _keyWeightAlphaMin = 'weightAlphaMin';
   static const _keyWeightAlphaMax = 'weightAlphaMax';
@@ -33,6 +39,13 @@ class SettingsRepository {
     final activityIndex =
         prefs.getInt(_keyActivityLevel) ?? UserSettings().activityLevel.index;
     final goalRate = prefs.getDouble(_keyGoalRate) ?? UserSettings().goalRate;
+
+    // START OF CHANGES
+    final weightUnitIndex =
+        prefs.getInt(_keyWeightUnit) ?? UserSettings().weightUnit.index;
+    final heightUnitIndex =
+        prefs.getInt(_keyHeightUnit) ?? UserSettings().heightUnit.index;
+    // END OF CHANGES
 
     // Load algorithm parameters if they exist
     final weightAlpha =
@@ -56,6 +69,10 @@ class SettingsRepository {
       age: age,
       sex: BiologicalSex.values[sexIndex],
       activityLevel: ActivityLevel.values[activityIndex],
+      // START OF CHANGES
+      weightUnit: WeightUnitSystem.values[weightUnitIndex],
+      heightUnit: HeightUnitSystem.values[heightUnitIndex],
+      // END OF CHANGES
       goalRate: goalRate,
       weightAlpha: weightAlpha,
       weightAlphaMin: weightAlphaMin,
@@ -76,6 +93,11 @@ class SettingsRepository {
     await prefs.setInt(_keyActivityLevel, settings.activityLevel.index);
     await prefs.setDouble(_keyGoalRate, settings.goalRate);
 
+    // START OF CHANGES
+    await prefs.setInt(_keyWeightUnit, settings.weightUnit.index);
+    await prefs.setInt(_keyHeightUnit, settings.heightUnit.index);
+    // END OF CHANGES
+
     // Save algorithm parameters
     await prefs.setDouble(_keyWeightAlpha, settings.weightAlpha);
     await prefs.setDouble(_keyWeightAlphaMin, settings.weightAlphaMin);
@@ -89,9 +111,10 @@ class SettingsRepository {
   /// Resets algorithm parameters to defaults
   Future<void> resetAlgorithmParameters() async {
     final prefs = await SharedPreferences.getInstance();
-    final defaultSettings = UserSettings();
+    final defaultSettings =
+        UserSettings(); // This will have default units as well
 
-    // Keep user profile settings, reset only algorithm parameters
+    // Keep user profile settings (including units), reset only algorithm parameters
     await prefs.setDouble(_keyWeightAlpha, defaultSettings.weightAlpha);
     await prefs.setDouble(_keyWeightAlphaMin, defaultSettings.weightAlphaMin);
     await prefs.setDouble(_keyWeightAlphaMax, defaultSettings.weightAlphaMax);
@@ -107,8 +130,8 @@ class SettingsRepository {
   /// Exports basic log data as CSV string
   Future<String> exportBasicCsv(List<LogEntry> entries) async {
     // Header row
+    // TODO: Consider adding unit information to the header or as separate columns if needed for import context
     final csvBuffer = StringBuffer('Date,Weight,PreviousDayCalories\n');
-
     // Sort entries by date (oldest first) before exporting
     final sortedEntries = List<LogEntry>.from(entries)
       ..sort((a, b) => a.date.compareTo(b.date));
@@ -126,7 +149,7 @@ class SettingsRepository {
   /// Exports detailed log data as JSON string
   Future<String> exportDetailedJson(
     List<LogEntry> entries,
-    UserSettings settings,
+    UserSettings settings, // Settings are passed in, good for context
   ) async {
     final calculationEngine = CalculationEngine();
     final jsonList = [];
@@ -135,21 +158,30 @@ class SettingsRepository {
     List<LogEntry> processedEntries = [];
     for (int i = 0; i < entries.length; i++) {
       processedEntries.add(entries[i]);
-
       final result = await calculationEngine.calculateStatus(
         processedEntries,
-        settings,
+        settings, // Pass current settings for each day's calc context
       );
 
       // Create JSON object for this day
       final entryMap = {
         'Date': entries[i].date,
         'RawWeight': entries[i].rawWeight,
+        // START OF CHANGES: Add weight unit to export for clarity
+        'WeightUnit':
+            settings.weightUnit
+                .toString()
+                .split('.')
+                .last, // e.g., "kg" or "lbs"
+        // END OF CHANGES
         'RawPreviousDayCalories': entries[i].rawPreviousDayCalories,
         'WeightEMA': result.trueWeight > 0 ? result.trueWeight : null,
         'CalorieEMA':
             result.averageCalories > 0 ? result.averageCalories : null,
         'SmoothedTrend_unit_per_week': result.weightTrend,
+        // START OF CHANGES: Clarify trend unit
+        'TrendUnit': settings.weightUnit.toString().split('.').last + '/week',
+        // END OF CHANGES
         'EstimatedTDEE_Algo':
             result.estimatedTdeeAlgo > 0 ? result.estimatedTdeeAlgo : null,
         'EstimatedTDEE_Standard':
@@ -164,14 +196,34 @@ class SettingsRepository {
                 : null,
         'AlphaWeight_Used': result.currentAlphaWeight,
         'AlphaCalorie_Used': result.currentAlphaCalorie,
-        'GoalRate_Set_for_Day': settings.goalRate,
+        'GoalRate_Set_for_Day':
+            settings.goalRate, // This uses the settings for the day of export
         'TDEE_BlendFactor_Used': result.tdeeBlendFactorUsed,
       };
-
       jsonList.add(entryMap);
     }
-
-    return jsonEncode(jsonList);
+    // START OF CHANGES: Add settings snapshot to JSON export for full context
+    final exportData = {
+      'settingsSnapshot': {
+        'height': settings.height,
+        'age': settings.age,
+        'sex': settings.sex.toString().split('.').last,
+        'activityLevel': settings.activityLevel.toString().split('.').last,
+        'weightUnit': settings.weightUnit.toString().split('.').last,
+        'heightUnit': settings.heightUnit.toString().split('.').last,
+        'goalRate': settings.goalRate,
+        'weightAlpha': settings.weightAlpha,
+        'weightAlphaMin': settings.weightAlphaMin,
+        'weightAlphaMax': settings.weightAlphaMax,
+        'calorieAlpha': settings.calorieAlpha,
+        'calorieAlphaMin': settings.calorieAlphaMin,
+        'calorieAlphaMax': settings.calorieAlphaMax,
+        'trendSmoothingDays': settings.trendSmoothingDays,
+      },
+      'logData': jsonList,
+    };
+    return jsonEncode(exportData);
+    // END OF CHANGES
   }
 
   /// Saves export data to a file and returns the file path
@@ -199,38 +251,42 @@ class SettingsRepository {
 
   /// Imports data from a CSV string
   /// Returns the number of entries imported
-  Future<int> importBasicCsv(String csvData) async {
+  /// The `overwriteExisting` parameter is handled by the caller (SettingsScreen)
+  /// This method now focuses on parsing and returning LogEntry list to be processed by caller.
+  Future<List<LogEntry>> parseBasicCsvToLogEntries(String csvData) async {
+    // Renamed from importBasicCsv to reflect its new role
     try {
       final lines = csvData.split('\n');
-      if (lines.isEmpty) return 0;
+      if (lines.isEmpty) return [];
 
       // Check for header row and skip if present
       int startIndex = 0;
       if (lines[0].toLowerCase().contains('date') &&
-          lines[0].toLowerCase().contains('weight')) {
+          (lines[0].toLowerCase().contains('weight') ||
+              lines[0].toLowerCase().contains('previousdaycalories'))) {
         startIndex = 1; // Skip header row
       }
 
       final importedEntries = <LogEntry>[];
-
       for (int i = startIndex; i < lines.length; i++) {
         final line = lines[i].trim();
         if (line.isEmpty) continue;
 
         final columns = line.split(',');
-        if (columns.length < 2) continue; // Need at least date and weight
+        // Expecting Date,Weight,PreviousDayCalories
+        if (columns.length < 1) continue; // Need at least date
 
         // Parse date
         final date = columns[0].trim();
         if (!_isValidDateFormat(date)) continue; // Skip invalid dates
 
-        // Parse weight (may be empty)
+        // Parse weight (may be empty or not present)
         double? weight;
         if (columns.length > 1 && columns[1].trim().isNotEmpty) {
           weight = double.tryParse(columns[1].trim());
         }
 
-        // Parse calories (may be empty)
+        // Parse calories (may be empty or not present)
         int? calories;
         if (columns.length > 2 && columns[2].trim().isNotEmpty) {
           calories = int.tryParse(columns[2].trim());
@@ -242,14 +298,11 @@ class SettingsRepository {
           rawWeight: weight,
           rawPreviousDayCalories: calories,
         );
-
         importedEntries.add(entry);
       }
-
-      // Return imported entries count
-      return importedEntries.length;
+      return importedEntries;
     } catch (e) {
-      throw Exception('Error importing CSV data: $e');
+      throw Exception('Error parsing CSV data: $e');
     }
   }
 

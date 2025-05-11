@@ -1,8 +1,10 @@
+// lib/viewmodel/log_input_status_notifier.dart
 import 'package:flutter/foundation.dart';
 import 'package:validation_app/data/database/log_entry.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
 import 'package:validation_app/data/repository/settings_repository.dart';
 import 'package:validation_app/calculation/calculation_engine.dart';
+import 'package:validation_app/models/user_settings.dart'; // Import UserSettings
 
 /// ViewModel for the "Log Input & Status" screen.
 /// Uses persisted UserSettings to drive calculations.
@@ -21,6 +23,9 @@ class LogInputStatusNotifier extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String get errorMessage => _errorMessage;
 
+  UserSettings? _currentUserSettings;
+  UserSettings? get currentUserSettings => _currentUserSettings;
+
   // Calculation results
   double? trueWeight;
   double? weightTrendPerWeek;
@@ -33,6 +38,9 @@ class LogInputStatusNotifier extends ChangeNotifier {
   double? deltaTarget;
   double? currentAlphaWeight;
   double? currentAlphaCalorie;
+  // START OF CHANGES: Add tdeeBlendFactorUsed
+  double? tdeeBlendFactorUsed;
+  // END OF CHANGES
 
   LogInputStatusNotifier({
     required TrackerRepository repository,
@@ -51,20 +59,21 @@ class LogInputStatusNotifier extends ChangeNotifier {
     notifyListeners();
 
     final today = DateTime.now();
+    // Ensure date is in<y_bin_46>-MM-DD format for DB consistency
+    final String dateString =
+        "${today.year.toString().padLeft(4, '0')}-"
+        "${today.month.toString().padLeft(2, '0')}-"
+        "${today.day.toString().padLeft(2, '0')}";
+
     final entry = LogEntry(
-      date:
-          DateTime(
-            today.year,
-            today.month,
-            today.day,
-          ).toIso8601String().split('T').first,
+      date: dateString,
       rawWeight: weight,
       rawPreviousDayCalories: calories,
     );
 
     try {
       await _repository.insertOrUpdateLogEntry(entry);
-      await _loadDataAndCalculate();
+      await _loadDataAndCalculate(); // This will reload settings and recalculate
     } catch (e) {
       _errorMessage = 'Error logging data: $e';
       _isLoading = false;
@@ -80,11 +89,11 @@ class LogInputStatusNotifier extends ChangeNotifier {
 
     try {
       final history = await _repository.getAllLogEntriesOldestFirst();
-      final settings = await _settingsRepo.loadSettings();
+      _currentUserSettings = await _settingsRepo.loadSettings();
 
       final result = await _calculationEngine.calculateStatus(
         history,
-        settings,
+        _currentUserSettings!,
       );
 
       trueWeight = result.trueWeight;
@@ -98,8 +107,26 @@ class LogInputStatusNotifier extends ChangeNotifier {
       deltaTarget = result.deltaTarget;
       currentAlphaWeight = result.currentAlphaWeight;
       currentAlphaCalorie = result.currentAlphaCalorie;
+      // START OF CHANGES: Assign tdeeBlendFactorUsed
+      tdeeBlendFactorUsed = result.tdeeBlendFactorUsed;
+      // END OF CHANGES
     } catch (e) {
       _errorMessage = 'Error calculating status: $e';
+      _currentUserSettings = null;
+      // START OF CHANGES: Clear calculation results on error too
+      trueWeight = null;
+      weightTrendPerWeek = null;
+      averageCalories = null;
+      estimatedTdeeAlgo = null;
+      targetCaloriesAlgo = null;
+      estimatedTdeeStandard = null;
+      targetCaloriesStandard = null;
+      deltaTdee = null;
+      deltaTarget = null;
+      currentAlphaWeight = null;
+      currentAlphaCalorie = null;
+      tdeeBlendFactorUsed = null;
+      // END OF CHANGES
     } finally {
       _isLoading = false;
       notifyListeners();
