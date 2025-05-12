@@ -1,6 +1,5 @@
 // lib/ui/graph_screen.dart
 import 'dart:math'; // For max/min in axis calculations if needed
-import 'package:flutter/foundation.dart'; // For debugPrint
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
