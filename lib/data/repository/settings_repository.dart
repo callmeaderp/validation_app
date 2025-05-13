@@ -159,7 +159,7 @@ class SettingsRepository {
 
     // Header row with unit information
     final csvBuffer = StringBuffer(
-      'Date,Weight (${weightUnit}),PreviousDayCalories (kcal)\n',
+      'Date,Weight ($weightUnit),PreviousDayCalories (kcal)\n',
     );
 
     // Sort entries by date (oldest first) before exporting
@@ -168,11 +168,10 @@ class SettingsRepository {
 
     // Add each entry as a row
     for (final entry in sortedEntries) {
-      csvBuffer.write('${entry.date},');
+      csvBuffer.write('$entry.date,'); // Corrected: Removed unnecessary braces
       csvBuffer.write('${entry.rawWeight ?? ''},');
       csvBuffer.write('${entry.rawPreviousDayCalories ?? ''}\n');
     }
-
     return csvBuffer.toString();
   }
 
@@ -192,7 +191,6 @@ class SettingsRepository {
     List<LogEntry> processedEntries = [];
     for (int i = 0; i < sortedEntries.length; i++) {
       processedEntries.add(sortedEntries[i]);
-
       // Calculate status for this day using all entries up to this point
       final result = await calculationEngine.calculateStatus(
         processedEntries,
@@ -252,7 +250,6 @@ class SettingsRepository {
       },
       'logData': jsonList,
     };
-
     return jsonEncode(exportData);
   }
 
@@ -272,7 +269,6 @@ class SettingsRepository {
       // Write data to file
       final file = File(filePath);
       await file.writeAsString(data);
-
       return filePath;
     } catch (e) {
       throw Exception('Error saving export file: $e');
@@ -284,7 +280,9 @@ class SettingsRepository {
   Future<List<LogEntry>> parseBasicCsvToLogEntries(String csvData) async {
     try {
       final lines = csvData.split('\n');
-      if (lines.isEmpty) return [];
+      if (lines.isEmpty) {
+        return [];
+      }
 
       // Check for header row and skip if present
       int startIndex = 0;
@@ -298,15 +296,21 @@ class SettingsRepository {
       final importedEntries = <LogEntry>[];
       for (int i = startIndex; i < lines.length; i++) {
         final line = lines[i].trim();
-        if (line.isEmpty) continue;
-
+        if (line.isEmpty) {
+          continue;
+        }
         final columns = line.split(',');
+
         // Expecting at least Date column
-        if (columns.length < 1) continue;
+        if (columns.isEmpty) {
+          continue;
+        }
 
         // Parse date - require valid format
         final date = columns[0].trim();
-        if (!_isValidDateFormat(date)) continue;
+        if (!_isValidDateFormat(date)) {
+          continue;
+        }
 
         // Parse weight - might be empty/null
         double? weight;
@@ -339,7 +343,6 @@ class SettingsRepository {
 
       // Sort entries by date to ensure chronological order
       importedEntries.sort((a, b) => a.date.compareTo(b.date));
-
       return importedEntries;
     } catch (e) {
       throw Exception('Error parsing CSV data: $e');
@@ -350,25 +353,23 @@ class SettingsRepository {
   bool _isValidDateFormat(String date) {
     // Expected format: YYYY-MM-DD
     final pattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
-    if (!pattern.hasMatch(date)) return false;
-
+    if (!pattern.hasMatch(date)) {
+      return false;
+    }
     // Further validate as a real date
     try {
       final parts = date.split('-');
-      final year = int.parse(parts[0]);
+      // final year = int.parse(parts[0]); // Corrected: Removed unused variable
       final month = int.parse(parts[1]);
       final day = int.parse(parts[2]);
-
       if (month < 1 || month > 12) return false;
       if (day < 1 || day > 31) return false;
-
       // Simple month length validation (ignoring leap years for simplicity)
       if ([4, 6, 9, 11].contains(month) && day > 30) return false;
-      if (month == 2 && day > 29) return false;
-
+      if (month == 2 && day > 29) return false; // Simplified leap year check
       return true;
     } catch (e) {
-      return false;
+      return false; // Parsing failed
     }
   }
 }
