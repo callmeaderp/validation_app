@@ -168,7 +168,7 @@ class SettingsRepository {
 
     // Add each entry as a row
     for (final entry in sortedEntries) {
-      csvBuffer.write('$entry.date,'); // Corrected: Removed unnecessary braces
+      csvBuffer.write('${entry.date},'); // Fixed: Added proper braces for property access
       csvBuffer.write('${entry.rawWeight ?? ''},');
       csvBuffer.write('${entry.rawPreviousDayCalories ?? ''}\n');
     }
@@ -306,10 +306,49 @@ class SettingsRepository {
           continue;
         }
 
-        // Parse date - require valid format
-        final date = columns[0].trim();
-        if (!_isValidDateFormat(date)) {
+        // Parse date and convert to standard format if needed
+        final rawDate = columns[0].trim();
+        if (!_isValidDateFormat(rawDate)) {
           continue;
+        }
+        
+        // Convert date to YYYY-MM-DD format if it's not already
+        String formattedDate = rawDate;
+        if (rawDate.contains('/')) {
+          final parts = rawDate.split('/');
+          if (parts.length == 3) {
+            // Handle both DD/MM/YYYY and MM/DD/YYYY formats
+            // For simplicity, we'll assume DD/MM/YYYY if day <= 12
+            // This is a simplified approach - a more robust solution would involve user configuration
+            int day, month, year;
+            
+            // Try to determine format based on values
+            final firstNum = int.parse(parts[0]);
+            final secondNum = int.parse(parts[1]);
+            
+            if (firstNum > 12) {
+              // If first number > 12, it must be day in DD/MM/YYYY
+              day = firstNum;
+              month = secondNum;
+              year = int.parse(parts[2]);
+            } else if (secondNum > 12) {
+              // If second number > 12, first must be month in MM/DD/YYYY
+              month = firstNum;
+              day = secondNum;
+              year = int.parse(parts[2]);
+            } else {
+              // If both could be month or day, assume DD/MM/YYYY (European format)
+              day = firstNum;
+              month = secondNum;
+              year = int.parse(parts[2]);
+            }
+            
+            // Format numbers with leading zeros if needed
+            String monthStr = month < 10 ? '0$month' : '$month';
+            String dayStr = day < 10 ? '0$day' : '$day';
+            
+            formattedDate = '$year-$monthStr-$dayStr';
+          }
         }
 
         // Parse weight - might be empty/null
@@ -332,9 +371,9 @@ class SettingsRepository {
           }
         }
 
-        // Create and add the entry if it has valid date
+        // Create and add the entry with the standardized date format
         final entry = LogEntry(
-          date: date,
+          date: formattedDate,
           rawWeight: weight,
           rawPreviousDayCalories: calories,
         );
@@ -349,27 +388,61 @@ class SettingsRepository {
     }
   }
 
-  /// Validates date format (YYYY-MM-DD)
+  /// Validates date format (supports multiple formats and converts to YYYY-MM-DD)
   bool _isValidDateFormat(String date) {
-    // Expected format: YYYY-MM-DD
-    final pattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
-    if (!pattern.hasMatch(date)) {
-      return false;
+    // Try to parse ISO format (YYYY-MM-DD) first
+    final isoPattern = RegExp(r'^\d{4}-\d{2}-\d{2}$');
+    if (isoPattern.hasMatch(date)) {
+      // Further validate as a real date
+      try {
+        final parts = date.split('-');
+        final month = int.parse(parts[1]);
+        final day = int.parse(parts[2]);
+        if (month < 1 || month > 12) return false;
+        if (day < 1 || day > 31) return false;
+        // Simple month length validation (ignoring leap years for simplicity)
+        if ([4, 6, 9, 11].contains(month) && day > 30) return false;
+        if (month == 2 && day > 29) return false; // Simplified leap year check
+        return true;
+      } catch (e) {
+        return false; // Parsing failed
+      }
     }
-    // Further validate as a real date
-    try {
-      final parts = date.split('-');
-      // final year = int.parse(parts[0]); // Corrected: Removed unused variable
-      final month = int.parse(parts[1]);
-      final day = int.parse(parts[2]);
-      if (month < 1 || month > 12) return false;
-      if (day < 1 || day > 31) return false;
-      // Simple month length validation (ignoring leap years for simplicity)
-      if ([4, 6, 9, 11].contains(month) && day > 30) return false;
-      if (month == 2 && day > 29) return false; // Simplified leap year check
-      return true;
-    } catch (e) {
-      return false; // Parsing failed
+    
+    // Try to parse DD/MM/YYYY format
+    final ddmmyyyyPattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$');
+    if (ddmmyyyyPattern.hasMatch(date)) {
+      try {
+        final parts = date.split('/');
+        final day = int.parse(parts[0]);
+        final month = int.parse(parts[1]);
+        if (month < 1 || month > 12) return false;
+        if (day < 1 || day > 31) return false;
+        if ([4, 6, 9, 11].contains(month) && day > 30) return false;
+        if (month == 2 && day > 29) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
+    
+    // Try to parse MM/DD/YYYY format
+    final mmddyyyyPattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$');
+    if (mmddyyyyPattern.hasMatch(date)) {
+      try {
+        final parts = date.split('/');
+        final month = int.parse(parts[0]);
+        final day = int.parse(parts[1]);
+        if (month < 1 || month > 12) return false;
+        if (day < 1 || day > 31) return false;
+        if ([4, 6, 9, 11].contains(month) && day > 30) return false;
+        if (month == 2 && day > 29) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    
+    return false; // No valid format matched
   }
 }

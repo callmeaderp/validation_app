@@ -333,7 +333,12 @@ class SettingsScreenState extends State<SettingsScreen> {
 
       if (importedEntries.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No valid entries found in CSV file.')),
+          const SnackBar(
+            content: Text(
+              'No valid entries found in CSV file. Make sure your CSV has columns for Date, Weight, and Calories, with dates in YYYY-MM-DD or DD/MM/YYYY format.',
+            ),
+            duration: Duration(seconds: 6),
+          ),
         );
         setState(() => _isImporting = false);
         return;
@@ -379,6 +384,143 @@ class SettingsScreenState extends State<SettingsScreen> {
                 ),
               ],
             ),
+      );
+    } catch (e) {
+      setState(() {
+        _isImporting = false;
+        _errorMessage = 'Error importing data: $e';
+      });
+    }
+  }
+
+  Future<void> _showPasteDialog() async {
+    final TextEditingController csvController = TextEditingController();
+    String? csvContent;
+    
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setState) {
+          return AlertDialog(
+            title: const Text('Paste CSV Content'),
+            content: SingleChildScrollView(
+              child: Container(
+                width: double.maxFinite,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Paste your CSV content below. It should have a header row with "Date" and optionally "Weight" and "Calories" columns.',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: csvController,
+                      maxLines: 8,
+                      decoration: const InputDecoration(
+                        hintText: 'Date,Weight,Calories\n2025-05-01,70.5,2100\n...',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (value) {
+                        csvContent = value;
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  csvContent = csvController.text;
+                  Navigator.of(dialogContext).pop();
+                },
+                child: const Text('Import'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    
+    // Dispose controller before processing content
+    String? contentToProcess = csvContent;
+    csvController.dispose();
+    
+    // Process the content after dialog is closed and controller is disposed
+    if (contentToProcess != null && contentToProcess.trim().isNotEmpty) {
+      await _importFromPastedContent(contentToProcess);
+    }
+  }
+  
+  Future<void> _importFromPastedContent(String csvContent) async {
+    setState(() => _isImporting = true);
+    try {
+      // Get parsed entries from pasted content
+      final List<LogEntry> importedEntries = await _settingsRepo
+          .parseBasicCsvToLogEntries(csvContent);
+
+      if (importedEntries.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'No valid entries found in pasted content. Make sure your CSV has columns for Date, Weight, and Calories, with dates in YYYY-MM-DD or DD/MM/YYYY format.',
+            ),
+            duration: Duration(seconds: 6),
+          ),
+        );
+        setState(() => _isImporting = false);
+        return;
+      }
+
+      // Show dialog to handle duplicate entries
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Import Data'),
+          content: Text(
+            'Found ${importedEntries.length} entries to import. How should duplicate entries (by date) be handled?\n\n'
+            'Skip: Keep existing entries.\n'
+            'Overwrite: Replace existing entries with imported data.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.pop(context);
+                setState(() => _isImporting = false);
+              },
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _processImport(
+                  importedEntries,
+                  overwriteExisting: false,
+                );
+              },
+              child: const Text('Skip'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.pop(context);
+                await _processImport(
+                  importedEntries,
+                  overwriteExisting: true,
+                );
+              },
+              child: const Text('Overwrite'),
+            ),
+          ],
+        ),
       );
     } catch (e) {
       setState(() {
@@ -896,10 +1038,24 @@ class SettingsScreenState extends State<SettingsScreen> {
           style: TextStyle(fontWeight: FontWeight.w500),
         ),
         const SizedBox(height: 8),
-        ElevatedButton.icon(
-          onPressed: _isImporting ? null : _importCsv,
-          icon: const Icon(Icons.file_upload),
-          label: const Text('Import from CSV'),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isImporting ? null : _importCsv,
+                icon: const Icon(Icons.file_upload),
+                label: const Text('Import from CSV'),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: _isImporting ? null : _showPasteDialog,
+                icon: const Icon(Icons.content_paste),
+                label: const Text('Paste CSV'),
+              ),
+            ),
+          ],
         ),
         if (_isImporting)
           const Padding(
