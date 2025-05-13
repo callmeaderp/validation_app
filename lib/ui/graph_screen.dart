@@ -727,7 +727,7 @@ class _GraphScreenState extends State<GraphScreen> {
                 }
                 // Correct usage of SideTitleWidget
                 return SideTitleWidget(
-                  axisSide: meta.axisSide,
+                  meta: meta,
                   space: 8.0,
                   child: Text(
                     label,
