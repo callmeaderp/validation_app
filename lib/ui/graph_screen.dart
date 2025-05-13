@@ -34,6 +34,7 @@ class _GraphScreenState extends State<GraphScreen> {
   bool _showRawWeight = true;
   bool _showTrueWeight = true;
   bool _showCalories = false;
+  bool _useAbsoluteScale = false;
 
   double _minWeightY = 0;
   double _maxWeightY = 100;
@@ -221,8 +222,17 @@ class _GraphScreenState extends State<GraphScreen> {
 
     if (allDisplayableWeights.isNotEmpty) {
       allDisplayableWeights.sort();
-      _minWeightY = (allDisplayableWeights.first * 0.95).floorToDouble() - 1;
-      _maxWeightY = (allDisplayableWeights.last * 1.05).ceilToDouble() + 1;
+      
+      if (_useAbsoluteScale) {
+        // Absolute scale starts from 0
+        _minWeightY = 0;
+        _maxWeightY = (allDisplayableWeights.last * 1.10).ceilToDouble();
+      } else {
+        // Relative scale fits to the data
+        _minWeightY = (allDisplayableWeights.first * 0.95).floorToDouble() - 1;
+        _maxWeightY = (allDisplayableWeights.last * 1.05).ceilToDouble() + 1;
+      }
+      
       if ((_maxWeightY - _minWeightY) < 5) {
         // Ensure a minimum range
         _maxWeightY = _minWeightY + 5;
@@ -232,7 +242,7 @@ class _GraphScreenState extends State<GraphScreen> {
         _maxWeightY += 2.5;
       }
     } else {
-      _minWeightY = 60;
+      _minWeightY = _useAbsoluteScale ? 0 : 60;
       _maxWeightY = 90; // Default sensible weight range
     }
 
@@ -241,8 +251,17 @@ class _GraphScreenState extends State<GraphScreen> {
 
     if (allDisplayableCalories.isNotEmpty) {
       allDisplayableCalories.sort();
-      _minCalorieY = (allDisplayableCalories.first * 0.90).floorToDouble() - 50;
-      _maxCalorieY = (allDisplayableCalories.last * 1.10).ceilToDouble() + 50;
+      
+      if (_useAbsoluteScale) {
+        // Absolute scale starts from 0
+        _minCalorieY = 0;
+        _maxCalorieY = (allDisplayableCalories.last * 1.10).ceilToDouble() + 100;
+      } else {
+        // Relative scale fits to the data
+        _minCalorieY = (allDisplayableCalories.first * 0.90).floorToDouble() - 50;
+        _maxCalorieY = (allDisplayableCalories.last * 1.10).ceilToDouble() + 50;
+      }
+      
       if ((_maxCalorieY - _minCalorieY) < 200) {
         // Ensure a minimum range
         _maxCalorieY = _minCalorieY + 200;
@@ -252,7 +271,7 @@ class _GraphScreenState extends State<GraphScreen> {
         _maxCalorieY += 100;
       }
     } else {
-      _minCalorieY = 1500;
+      _minCalorieY = _useAbsoluteScale ? 0 : 1500;
       _maxCalorieY = 3500; // Default sensible calorie range
     }
 
@@ -564,6 +583,27 @@ class _GraphScreenState extends State<GraphScreen> {
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
+            const Divider(height: 4),
+            CheckboxListTile(
+              title: const Text(
+                'Absolute Scale (0-based)',
+                style: TextStyle(fontSize: 14),
+              ),
+              value: _useAbsoluteScale,
+              onChanged: (value) async {
+                if (value != _useAbsoluteScale) {
+                  setState(() {
+                    _useAbsoluteScale = value ?? false;
+                  });
+                  // Reload data to update chart with new scale
+                  final settings = await _settingsRepo.loadSettings();
+                  await _processDataForChart(settings);
+                }
+              },
+              controlAffinity: ListTileControlAffinity.leading,
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+            ),
           ],
         ),
       ),
@@ -576,8 +616,30 @@ class _GraphScreenState extends State<GraphScreen> {
     bool isCurved = true,
     double barWidth = 2.5,
     bool showDots = false,
+    bool useCalorieScale = false,
   }) {
-    /* ... (keep as is) ... */
+    if (useCalorieScale) {
+      // Scale the calorie data points to weight scale for rendering
+      // but show actual values in tooltip
+      List<FlSpot> scaledSpots = spots.map((spot) {
+        // Store original Y value as a tag for the tooltip to use
+        return FlSpot(
+          spot.x,
+          _scaleCaloriesToWeightRange(spot.y),
+        );
+      }).toList();
+      
+      return LineChartBarData(
+        spots: scaledSpots,
+        isCurved: isCurved,
+        color: color,
+        barWidth: barWidth,
+        isStrokeCapRound: true,
+        dotData: FlDotData(show: showDots),
+        belowBarData: BarAreaData(show: false),
+      );
+    }
+    
     return LineChartBarData(
       spots: spots,
       isCurved: isCurved,
@@ -587,6 +649,30 @@ class _GraphScreenState extends State<GraphScreen> {
       dotData: FlDotData(show: showDots),
       belowBarData: BarAreaData(show: false),
     );
+  }
+  
+  // Convert calorie value to equivalent position in weight scale
+  double _scaleCaloriesToWeightRange(double calorieValue) {
+    // Skip scaling if either range is invalid
+    if (_maxCalorieY <= _minCalorieY || _maxWeightY <= _minWeightY) {
+      return calorieValue;
+    }
+    
+    // Calculate the relative position of the calorie value in its range (0.0 to 1.0)
+    double relativePosition = (calorieValue - _minCalorieY) / (_maxCalorieY - _minCalorieY);
+    
+    // Map that relative position to the weight range
+    return _minWeightY + relativePosition * (_maxWeightY - _minWeightY);
+  }
+  
+  // Convert from weight scale back to calorie value (for tooltip)
+  double _scaleWeightToCalorieRange(double scaledValue) {
+    if (_maxCalorieY <= _minCalorieY || _maxWeightY <= _minWeightY) {
+      return scaledValue;
+    }
+    
+    double relativePosition = (scaledValue - _minWeightY) / (_maxWeightY - _minWeightY);
+    return _minCalorieY + relativePosition * (_maxCalorieY - _minCalorieY);
   }
 
   Widget _buildChart() {
@@ -612,8 +698,14 @@ class _GraphScreenState extends State<GraphScreen> {
       );
     }
     if (_showCalories && _calorieSpots.isNotEmpty) {
+      bool shouldScale = _showRawWeight || _showTrueWeight;
       lineBarsData.add(
-        _buildLineBarData(_calorieSpots, Colors.orange.shade700, barWidth: 2),
+        _buildLineBarData(
+          _calorieSpots, 
+          Colors.orange.shade700, 
+          barWidth: 2,
+          useCalorieScale: shouldScale,
+        ),
       );
     }
 
@@ -688,17 +780,24 @@ class _GraphScreenState extends State<GraphScreen> {
           ),
           rightTitles: AxisTitles(
             sideTitles: SideTitles(
-              showTitles: _showCalories && !onlyShowingWeight,
+              showTitles: _showCalories, // Always show right titles when calories are enabled
               interval: calorieInterval,
               reservedSize: 40,
-              getTitlesWidget:
-                  (value, meta) => Text(
-                    value.toStringAsFixed(0),
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: Colors.orange.shade700,
-                    ),
+              getTitlesWidget: (value, meta) {
+                // For right axis with scaled calorie values, we need to convert
+                // from the weight scale back to calorie values for display
+                double displayValue = _showRawWeight || _showTrueWeight
+                    ? _scaleWeightToCalorieRange(value)
+                    : value;
+
+                return Text(
+                  displayValue.toStringAsFixed(0),
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.orange.shade700,
                   ),
+                );
+              },
             ),
           ),
           bottomTitles: AxisTitles(
@@ -780,9 +879,14 @@ class _GraphScreenState extends State<GraphScreen> {
                         'Raw W: ${touchedSpot.y.toStringAsFixed(1)} ${(_settingsRepo.loadSettings().then((s) => s.weightUnitString)).toString()[0]}'; // Example, needs async handling or cached settings
                   } else if (currentBarData.spots == _trueWeightSpots) {
                     textContent = 'True W: ${touchedSpot.y.toStringAsFixed(1)}';
-                  } else if (currentBarData.spots == _calorieSpots) {
-                    textContent =
-                        'Avg Cal: ${touchedSpot.y.toStringAsFixed(0)} kcal';
+                  } else if (currentBarData.spots.length == _calorieSpots.length) {
+                    // For calorie data that's been scaled, we need to retrieve the original value
+                    // We can use the _scaleWeightToCalorieRange to convert back if both weight and calories are shown
+                    double actualValue = _showRawWeight || _showTrueWeight 
+                        ? _scaleWeightToCalorieRange(touchedSpot.y)
+                        : touchedSpot.y;
+                        
+                    textContent = 'Avg Cal: ${actualValue.toStringAsFixed(0)} kcal';
                   }
                 }
 
