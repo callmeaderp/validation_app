@@ -360,9 +360,9 @@ class CalculationEngine {
           (energyEquivalent / 7.0);
     }
 
-    // Target = TDEE - Deficit (for weight loss) or TDEE + Surplus (for gain)
+    // Target = TDEE + Deficit/Surplus (negative for weight loss, positive for gain)
     double targetCaloriesAlgo =
-        finalEstimatedTdeeAlgo - targetDeficitOrSurplusPerDay;
+        finalEstimatedTdeeAlgo + targetDeficitOrSurplusPerDay;
 
     // --- Standard Formula Calculations (for comparison) ---
     double estimatedTdeeStandard = _calculateStandardTdee(
@@ -370,7 +370,7 @@ class CalculationEngine {
       finalTrueWeight,
     );
     double targetCaloriesStandard =
-        estimatedTdeeStandard - targetDeficitOrSurplusPerDay;
+        estimatedTdeeStandard + targetDeficitOrSurplusPerDay;
 
     // --- Deltas for diagnostic purposes ---
     double deltaTdee = finalEstimatedTdeeAlgo - estimatedTdeeStandard;

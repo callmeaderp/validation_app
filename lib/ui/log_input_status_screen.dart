@@ -376,6 +376,14 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                 '${formatNumber(notifier.weightTrendPerWeek, decimals: 2, showPlus: true)} $weightUnit/week',
                 'Average weekly weight change over the last $trendSmoothingDays days.',
               ),
+              _buildMetricTile(
+                context,
+                'Goal Rate',
+                '${formatNumber(notifier.trueWeight != null && notifier.trueWeight! > 0 ? 
+                    (notifier.currentUserSettings?.goalRate ?? 0) * notifier.trueWeight! / 100 : 
+                    0, decimals: 2, showPlus: true)} $weightUnit/week',
+                'Your targeted rate of weight change per week (${notifier.currentUserSettings?.goalRate ?? 0}% of body weight).',
+              ),
             ],
             if (notifier.averageCalories != null &&
                 notifier.averageCalories! > 0)

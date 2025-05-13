@@ -182,12 +182,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         const SnackBar(content: Text('Settings saved successfully')),
       );
       setState(() => _isLoading = false);
-      // Optionally pop or inform LogInputStatusNotifier to refresh
-      if (Navigator.canPop(context)) {
-        Navigator.of(
-          context,
-        ).pop(true); // Pass true to indicate settings changed
-      }
+      // No need to pop - settings changes are now propagated through the stream
     } catch (e) {
       setState(() {
         _isLoading = false;
@@ -216,9 +211,9 @@ class SettingsScreenState extends State<SettingsScreen> {
                   setState(() => _isLoading = true);
                   try {
                     await _settingsRepo.resetAlgorithmParameters();
-                    // Reload all settings to reflect changes in UI,
-                    // including potentially algorithm params if they were linked to UserSettings defaults
-                    await _loadSettings();
+                    // No need to reload settings - they're propagated through the stream
+                    // Just refresh the UI to show the updated parameters
+                    await _loadSettings(); 
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -719,9 +714,9 @@ class SettingsScreenState extends State<SettingsScreen> {
         TextFormField(
           controller: _goalRateController,
           decoration: const InputDecoration(
-            labelText: 'Goal Rate (%/week)',
+            labelText: 'Goal Rate (%/week of body weight)',
             border: OutlineInputBorder(),
-            helperText: 'Negative for weight loss, positive for weight gain',
+            helperText: 'Negative for weight loss (e.g., -1 = lose 1% of body weight/week), positive for gain',
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
