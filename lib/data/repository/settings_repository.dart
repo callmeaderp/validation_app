@@ -25,6 +25,12 @@ class SettingsRepository {
   static const _keyCalorieAlphaMin = 'calorieAlphaMin';
   static const _keyCalorieAlphaMax = 'calorieAlphaMax';
   static const _keyTrendSmoothingDays = 'trendSmoothingDays';
+  
+  // Stream controller to broadcast settings changes
+  final _settingsStreamController = StreamController<UserSettings>.broadcast();
+  
+  // Expose a stream of settings changes
+  Stream<UserSettings> get settingsStream => _settingsStreamController.stream;
 
   /// Loads settings, falling back to [UserSettings] defaults if not set.
   Future<UserSettings> loadSettings() async {
@@ -132,6 +138,9 @@ class SettingsRepository {
     await prefs.setDouble(_keyCalorieAlphaMin, settings.calorieAlphaMin);
     await prefs.setDouble(_keyCalorieAlphaMax, settings.calorieAlphaMax);
     await prefs.setInt(_keyTrendSmoothingDays, settings.trendSmoothingDays);
+    
+    // Notify listeners about the new settings
+    _settingsStreamController.add(settings);
   }
 
   /// Resets algorithm parameters to defaults
@@ -150,6 +159,10 @@ class SettingsRepository {
       _keyTrendSmoothingDays,
       defaultSettings.trendSmoothingDays,
     );
+    
+    // Load the updated settings after reset to notify listeners
+    final updatedSettings = await loadSettings();
+    _settingsStreamController.add(updatedSettings);
   }
 
   /// Exports basic log data as CSV string with unit information
@@ -444,5 +457,10 @@ class SettingsRepository {
     }
     
     return false; // No valid format matched
+  }
+  
+  /// Closes the stream controller when the repository is no longer needed
+  void dispose() {
+    _settingsStreamController.close();
   }
 }

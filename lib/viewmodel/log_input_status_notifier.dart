@@ -1,4 +1,5 @@
 // lib/viewmodel/log_input_status_notifier.dart
+import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:validation_app/data/database/log_entry.dart';
 import 'package:validation_app/data/repository/tracker_repository.dart';
@@ -40,6 +41,8 @@ class LogInputStatusNotifier extends ChangeNotifier {
   double? currentAlphaCalorie;
   double? tdeeBlendFactorUsed;
 
+  StreamSubscription? _settingsSubscription;
+
   LogInputStatusNotifier({
     required TrackerRepository repository,
     required SettingsRepository settingsRepo,
@@ -48,6 +51,12 @@ class LogInputStatusNotifier extends ChangeNotifier {
        _settingsRepo = settingsRepo,
        _calculationEngine = calculationEngine ?? CalculationEngine() {
     _loadDataAndCalculate();
+    
+    // Subscribe to settings changes
+    _settingsSubscription = _settingsRepo.settingsStream.listen((settings) {
+      _currentUserSettings = settings;
+      refreshCalculations();
+    });
   }
 
   /// Called when the user taps "Log Data".
@@ -162,5 +171,12 @@ class LogInputStatusNotifier extends ChangeNotifier {
     // Clear previous error before refreshing
     _errorMessage = '';
     await _loadDataAndCalculate();
+  }
+  
+  @override
+  void dispose() {
+    // Cancel the settings subscription to avoid memory leaks
+    _settingsSubscription?.cancel();
+    super.dispose();
   }
 }

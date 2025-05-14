@@ -124,16 +124,19 @@ class _ValidationAppWrapperState extends State<ValidationAppWrapper> {
   // Create repositories here if their lifecycle is tied to the entire app,
   // and dispose them here.
   late final TrackerRepository _trackerRepository;
+  late final SettingsRepository _settingsRepository;
 
   @override
   void initState() {
     super.initState();
     _trackerRepository = TrackerRepository();
+    _settingsRepository = SettingsRepository();
   }
 
   @override
   void dispose() {
     _trackerRepository.dispose();
+    _settingsRepository.dispose();
     super.dispose();
   }
 
@@ -143,9 +146,8 @@ class _ValidationAppWrapperState extends State<ValidationAppWrapper> {
       providers: [
         // Provide the instance of TrackerRepository
         Provider<TrackerRepository>.value(value: _trackerRepository),
-        // SettingsRepository can be created on demand or provided similarly if needed elsewhere.
-        // For now, assuming it's mostly used by LogInputStatusNotifier or directly by settings screen.
-        Provider<SettingsRepository>(create: (_) => SettingsRepository()),
+        // Provide the instance of SettingsRepository
+        Provider<SettingsRepository>.value(value: _settingsRepository),
         ChangeNotifierProvider<LogInputStatusNotifier>(
           create:
               (ctx) => LogInputStatusNotifier(
