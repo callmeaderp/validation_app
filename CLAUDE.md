@@ -18,6 +18,12 @@ This file provides guidance to Claude Code when working on the Validation App pr
 * **Legacy EMA Approach:** Alternative algorithm using single-state Kalman filter or EMA for weight and fixed-window averaging for trend.
   * Toggled via `useKalmanFilter` flag in `AlgorithmParameters`
 * **TDEE Estimation:** Uses energy balance equation `TDEE = Calories In - (Energy Equivalent * Weight Change)`. Weekly trend is converted to daily rate by dividing by 7.0.
+* **Planned Self-Correcting Functionality:** 
+  * Future implementation will include self-tuning parameter adaptation based on innovation sequence analysis
+  * Algorithm parameters will automatically adjust as more data points are collected
+  * Will improve accuracy over time through statistical analysis of prediction errors
+  * Outlier detection and dynamic process noise adjustment planned
+  * TODOs exist in the codebase (marked in `WeightKalmanFilter` class) for these enhancements
 
 ## Testing
 
