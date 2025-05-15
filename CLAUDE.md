@@ -5,9 +5,19 @@ This file provides guidance to Claude Code when working on the Validation App pr
 ## Project Overview
 
 * **Name:** Weight Tracker Validation App
-* **Purpose:** A personal tool to test and refine the EMA-based algorithm for weight and calorie tracking. Not intended for public release; used solely for private experimentation and validation.
+* **Purpose:** A personal tool to test and refine weight and calorie tracking algorithms. Implements both EMA-based and 2-State Kalman Filter approaches for comparison. Not intended for public release; used solely for private experimentation and validation.
 * **Stack:** Flutter (Dart), Provider for state management, SQLite via `sqflite`, Shared Preferences, `fl_chart` for graphs.
 * **Pattern:** MVVM—Models, Data (Repository/Database), Calculation Engine, ViewModels, UI Screens.
+
+## Core Algorithms
+
+* **2-State Kalman Filter:** Primary algorithm for weight and trend estimation. Implemented in `WeightKalmanFilter` class with Matrix math support.
+  * Simultaneously estimates both true weight and daily weight change rate
+  * Provides direct access to trend via state vector (`weightEstimate`, `changeRateEstimate`, `weeklyChangeRateEstimate`)
+  * Handles unit scaling appropriately (LBS vs KG)
+* **Legacy EMA Approach:** Alternative algorithm using single-state Kalman filter or EMA for weight and fixed-window averaging for trend.
+  * Toggled via `useKalmanFilter` flag in `AlgorithmParameters`
+* **TDEE Estimation:** Uses energy balance equation `TDEE = Calories In - (Energy Equivalent * Weight Change)`. Weekly trend is converted to daily rate by dividing by 7.0.
 
 ## Testing
 
@@ -26,3 +36,4 @@ This file provides guidance to Claude Code when working on the Validation App pr
 * **No Cloud Sync:** Data remains local; use manual import/export as needed.
 * **Orientation Locked:** Portrait mode only.
 * **Dynamic Alpha Ranges:** Defined in `UserSettings`; adjust via the Settings screen as needed.
+* **UI Tooltips:** Information icons in the calculation results section provide accurate descriptions of how values are calculated. These have been updated to match the 2-State Kalman filter implementation.
