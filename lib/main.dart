@@ -41,7 +41,7 @@ class AppInitializer {
 /// Splash screen shown during initialization
 class SplashScreen extends StatelessWidget {
   final String? error;
-  const SplashScreen({Key? key, this.error}) : super(key: key);
+  const SplashScreen({super.key, this.error});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(

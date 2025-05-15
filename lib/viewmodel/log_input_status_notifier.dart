@@ -26,6 +26,9 @@ class LogInputStatusNotifier extends ChangeNotifier {
 
   UserSettings? _currentUserSettings;
   UserSettings? get currentUserSettings => _currentUserSettings;
+  
+  AlgorithmParameters? _algorithmParams;
+  AlgorithmParameters? get algorithmParams => _algorithmParams;
 
   // Calculation results
   double? trueWeight;
@@ -42,6 +45,7 @@ class LogInputStatusNotifier extends ChangeNotifier {
   double? tdeeBlendFactorUsed;
 
   StreamSubscription? _settingsSubscription;
+  StreamSubscription? _algorithmParamsSubscription;
 
   LogInputStatusNotifier({
     required TrackerRepository repository,
@@ -55,6 +59,13 @@ class LogInputStatusNotifier extends ChangeNotifier {
     // Subscribe to settings changes
     _settingsSubscription = _settingsRepo.settingsStream.listen((settings) {
       _currentUserSettings = settings;
+      refreshCalculations();
+    });
+    
+    // Subscribe to algorithm parameter changes
+    _algorithmParamsSubscription = _settingsRepo.algorithmParamsStream.listen((params) {
+      _algorithmParams = params;
+      _calculationEngine.algorithmParameters = params;
       refreshCalculations();
     });
   }
@@ -104,7 +115,7 @@ class LogInputStatusNotifier extends ChangeNotifier {
     }
   }
 
-  /// Fetches history, loads settings, runs the engine, and updates state.
+  /// Fetches history, loads settings, algorithm parameters, runs the engine, and updates state.
   Future<void> _loadDataAndCalculate() async {
     _isLoading = true;
     _errorMessage = ''; // Clear error at the start of loading
@@ -116,6 +127,14 @@ class LogInputStatusNotifier extends ChangeNotifier {
     try {
       // Fetch fresh settings every time calculations are run.
       _currentUserSettings = await _settingsRepo.loadSettings();
+      
+      // Load algorithm parameters
+      _algorithmParams = await _settingsRepo.loadAlgorithmParameters();
+      
+      // Update engine with the latest parameters
+      if (_algorithmParams != null) {
+        _calculationEngine.algorithmParameters = _algorithmParams!;
+      }
 
       // Ensure settings are loaded before proceeding with history that might depend on them
       // or before passing them to calculationEngine.
@@ -175,8 +194,9 @@ class LogInputStatusNotifier extends ChangeNotifier {
   
   @override
   void dispose() {
-    // Cancel the settings subscription to avoid memory leaks
+    // Cancel all subscriptions to avoid memory leaks
     _settingsSubscription?.cancel();
+    _algorithmParamsSubscription?.cancel();
     super.dispose();
   }
 }

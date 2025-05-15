@@ -32,14 +32,7 @@ class SettingsScreenState extends State<SettingsScreen> {
   String _currentHeightLabel = 'Height'; // Dynamic label
   // END OF CHANGES
 
-  // Algorithm parameters controllers
-  late TextEditingController _weightAlphaController;
-  late TextEditingController _weightAlphaMinController;
-  late TextEditingController _weightAlphaMaxController;
-  late TextEditingController _calorieAlphaController;
-  late TextEditingController _calorieAlphaMinController;
-  late TextEditingController _calorieAlphaMaxController;
-  late TextEditingController _trendSmoothingDaysController;
+  // No algorithm parameters controllers needed
 
   bool _isLoading = true;
   String _errorMessage = '';
@@ -81,28 +74,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         _updateHeightLabel(); // Set initial height label
         // END OF CHANGES
 
-        // Algorithm parameters controllers
-        _weightAlphaController = TextEditingController(
-          text: settings.weightAlpha.toString(),
-        );
-        _weightAlphaMinController = TextEditingController(
-          text: settings.weightAlphaMin.toString(),
-        );
-        _weightAlphaMaxController = TextEditingController(
-          text: settings.weightAlphaMax.toString(),
-        );
-        _calorieAlphaController = TextEditingController(
-          text: settings.calorieAlpha.toString(),
-        );
-        _calorieAlphaMinController = TextEditingController(
-          text: settings.calorieAlphaMin.toString(),
-        );
-        _calorieAlphaMaxController = TextEditingController(
-          text: settings.calorieAlphaMax.toString(),
-        );
-        _trendSmoothingDaysController = TextEditingController(
-          text: settings.trendSmoothingDays.toString(),
-        );
+        // Algorithm parameters are now managed separately
 
         _isLoading = false;
         _errorMessage = '';
@@ -132,13 +104,6 @@ class SettingsScreenState extends State<SettingsScreen> {
     _heightController.dispose();
     _ageController.dispose();
     _goalRateController.dispose();
-    _weightAlphaController.dispose();
-    _weightAlphaMinController.dispose();
-    _weightAlphaMaxController.dispose();
-    _calorieAlphaController.dispose();
-    _calorieAlphaMinController.dispose();
-    _calorieAlphaMaxController.dispose();
-    _trendSmoothingDaysController.dispose();
     super.dispose();
   }
 
@@ -161,18 +126,9 @@ class SettingsScreenState extends State<SettingsScreen> {
         age: int.parse(_ageController.text),
         sex: _sex,
         activityLevel: _activityLevel,
-        // START OF CHANGES: Save selected units
         weightUnit: _selectedWeightUnit,
         heightUnit: _selectedHeightUnit,
-        // END OF CHANGES
         goalRate: double.parse(_goalRateController.text),
-        weightAlpha: double.parse(_weightAlphaController.text),
-        weightAlphaMin: double.parse(_weightAlphaMinController.text),
-        weightAlphaMax: double.parse(_weightAlphaMaxController.text),
-        calorieAlpha: double.parse(_calorieAlphaController.text),
-        calorieAlphaMin: double.parse(_calorieAlphaMinController.text),
-        calorieAlphaMax: double.parse(_calorieAlphaMaxController.text),
-        trendSmoothingDays: int.parse(_trendSmoothingDaysController.text),
       );
       await _settingsRepo.saveSettings(updated);
 
@@ -213,7 +169,7 @@ class SettingsScreenState extends State<SettingsScreen> {
                     await _settingsRepo.resetAlgorithmParameters();
                     // No need to reload settings - they're propagated through the stream
                     // Just refresh the UI to show the updated parameters
-                    await _loadSettings(); 
+                    await _loadSettings();
                     if (!mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -391,71 +347,73 @@ class SettingsScreenState extends State<SettingsScreen> {
   Future<void> _showPasteDialog() async {
     final TextEditingController csvController = TextEditingController();
     String? csvContent;
-    
+
     await showDialog<void>(
       context: context,
       barrierDismissible: true,
-      builder: (BuildContext dialogContext) => StatefulBuilder(
-        builder: (BuildContext context, StateSetter setState) {
-          return AlertDialog(
-            title: const Text('Paste CSV Content'),
-            content: SingleChildScrollView(
-              child: Container(
-                width: double.maxFinite,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Paste your CSV content below. It should have a header row with "Date" and optionally "Weight" and "Calories" columns.',
-                      style: TextStyle(fontSize: 14),
+      builder:
+          (BuildContext dialogContext) => StatefulBuilder(
+            builder: (BuildContext context, StateSetter setState) {
+              return AlertDialog(
+                title: const Text('Paste CSV Content'),
+                content: SingleChildScrollView(
+                  child: SizedBox(
+                    width: double.maxFinite,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Paste your CSV content below. It should have a header row with "Date" and optionally "Weight" and "Calories" columns.',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: csvController,
+                          maxLines: 8,
+                          decoration: const InputDecoration(
+                            hintText:
+                                'Date,Weight,Calories\n2025-05-01,70.5,2100\n...',
+                            border: OutlineInputBorder(),
+                          ),
+                          onChanged: (value) {
+                            csvContent = value;
+                          },
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: csvController,
-                      maxLines: 8,
-                      decoration: const InputDecoration(
-                        hintText: 'Date,Weight,Calories\n2025-05-01,70.5,2100\n...',
-                        border: OutlineInputBorder(),
-                      ),
-                      onChanged: (value) {
-                        csvContent = value;
-                      },
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(dialogContext).pop();
-                },
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () {
-                  csvContent = csvController.text;
-                  Navigator.of(dialogContext).pop();
-                },
-                child: const Text('Import'),
-              ),
-            ],
-          );
-        },
-      ),
+                actions: [
+                  TextButton(
+                    onPressed: () {
+                      Navigator.of(dialogContext).pop();
+                    },
+                    child: const Text('Cancel'),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      csvContent = csvController.text;
+                      Navigator.of(dialogContext).pop();
+                    },
+                    child: const Text('Import'),
+                  ),
+                ],
+              );
+            },
+          ),
     );
-    
+
     // Dispose controller before processing content
     String? contentToProcess = csvContent;
     csvController.dispose();
-    
+
     // Process the content after dialog is closed and controller is disposed
     if (contentToProcess != null && contentToProcess.trim().isNotEmpty) {
       await _importFromPastedContent(contentToProcess);
     }
   }
-  
+
   Future<void> _importFromPastedContent(String csvContent) async {
     setState(() => _isImporting = true);
     try {
@@ -479,43 +437,44 @@ class SettingsScreenState extends State<SettingsScreen> {
       // Show dialog to handle duplicate entries
       showDialog(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Import Data'),
-          content: Text(
-            'Found ${importedEntries.length} entries to import. How should duplicate entries (by date) be handled?\n\n'
-            'Skip: Keep existing entries.\n'
-            'Overwrite: Replace existing entries with imported data.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() => _isImporting = false);
-              },
-              child: const Text('Cancel'),
+        builder:
+            (context) => AlertDialog(
+              title: const Text('Import Data'),
+              content: Text(
+                'Found ${importedEntries.length} entries to import. How should duplicate entries (by date) be handled?\n\n'
+                'Skip: Keep existing entries.\n'
+                'Overwrite: Replace existing entries with imported data.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    setState(() => _isImporting = false);
+                  },
+                  child: const Text('Cancel'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _processImport(
+                      importedEntries,
+                      overwriteExisting: false,
+                    );
+                  },
+                  child: const Text('Skip'),
+                ),
+                TextButton(
+                  onPressed: () async {
+                    Navigator.pop(context);
+                    await _processImport(
+                      importedEntries,
+                      overwriteExisting: true,
+                    );
+                  },
+                  child: const Text('Overwrite'),
+                ),
+              ],
             ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await _processImport(
-                  importedEntries,
-                  overwriteExisting: false,
-                );
-              },
-              child: const Text('Skip'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await _processImport(
-                  importedEntries,
-                  overwriteExisting: true,
-                );
-              },
-              child: const Text('Overwrite'),
-            ),
-          ],
-        ),
       );
     } catch (e) {
       setState(() {
@@ -625,11 +584,7 @@ class SettingsScreenState extends State<SettingsScreen> {
         children: [
           _buildProfileSection(),
           const Divider(height: 32),
-          // START OF CHANGES: Add Units Section
           _buildUnitsSection(),
-          const Divider(height: 32),
-          // END OF CHANGES
-          _buildAlgorithmSection(),
           const Divider(height: 32),
           _buildDataManagementSection(),
           const SizedBox(height: 32),
@@ -716,7 +671,8 @@ class SettingsScreenState extends State<SettingsScreen> {
           decoration: const InputDecoration(
             labelText: 'Goal Rate (%/week of body weight)',
             border: OutlineInputBorder(),
-            helperText: 'Negative for weight loss (e.g., -1 = lose 1% of body weight/week), positive for gain',
+            helperText:
+                'Negative for weight loss (e.g., -1 = lose 1% of body weight/week), positive for gain',
           ),
           keyboardType: const TextInputType.numberWithOptions(
             decimal: true,
@@ -801,189 +757,19 @@ class SettingsScreenState extends State<SettingsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'Algorithm Parameters',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            TextButton(
-              onPressed: _resetAlgorithmParameters,
-              child: const Text('Reset to Defaults'),
-            ),
-          ],
+        const Text(
+          'Algorithm Parameters',
+          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 8),
         const Text(
-          'Warning: Changing these parameters may affect calculation accuracy. Only adjust if you understand the algorithm.',
-          style: TextStyle(color: Colors.orange, fontStyle: FontStyle.italic),
+          'Algorithm parameters have been moved to a separate configuration mechanism for advanced users. This allows the core calculation engine to be modified independently.',
+          style: TextStyle(fontSize: 14),
         ),
         const SizedBox(height: 16),
         const Text(
-          'Weight Smoothing Factor (Alpha)',
-          style: TextStyle(fontWeight: FontWeight.w500),
-        ),
-        const Text(
-          'Controls how quickly the EMA responds to new weight entries. Higher values respond faster, lower values provide more smoothing.',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _weightAlphaController,
-                decoration: const InputDecoration(
-                  labelText: 'Current Alpha',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  return null;
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _weightAlphaMinController,
-                decoration: const InputDecoration(
-                  labelText: 'Min Value',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  // TODO: Add validation: min < current < max
-                  return null;
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _weightAlphaMaxController,
-                decoration: const InputDecoration(
-                  labelText: 'Max Value',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  // TODO: Add validation: min < current < max
-                  return null;
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'Calorie Smoothing Factor (Alpha)',
-          style: TextStyle(fontWeight: FontWeight.w500),
-        ),
-        const Text(
-          'Controls how quickly the EMA responds to new calorie entries. Higher values respond faster, lower values provide more smoothing.',
-          style: TextStyle(fontSize: 12, color: Colors.grey),
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: TextFormField(
-                controller: _calorieAlphaController,
-                decoration: const InputDecoration(
-                  labelText: 'Current Alpha',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  return null;
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _calorieAlphaMinController,
-                decoration: const InputDecoration(
-                  labelText: 'Min Value',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  return null;
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: _calorieAlphaMaxController,
-                decoration: const InputDecoration(
-                  labelText: 'Max Value',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                validator: (v) {
-                  if (v == null || v.isEmpty) return 'Required';
-                  final value = double.tryParse(v);
-                  if (value == null) return 'Invalid number';
-                  if (value <= 0 || value >= 1) return 'Must be 0 < alpha < 1';
-                  return null;
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        TextFormField(
-          controller: _trendSmoothingDaysController,
-          decoration: const InputDecoration(
-            labelText: 'Trend Smoothing Days',
-            border: OutlineInputBorder(),
-            helperText:
-                'Number of days used for calculating the weight trend (recommended: 7)',
-          ),
-          keyboardType: TextInputType.number,
-          validator: (v) {
-            if (v == null || v.isEmpty) return 'Required';
-            final value = int.tryParse(v);
-            if (value == null) return 'Invalid number';
-            if (value < 1) return 'Must be positive';
-            return null;
-          },
+          'The EMA-based algorithm automatically adjusts its parameters based on data consistency and fluctuations. Default values provide optimal balance between responsiveness and stability for most users.',
+          style: TextStyle(fontSize: 14),
         ),
       ],
     );

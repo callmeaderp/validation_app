@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:validation_app/viewmodel/log_input_status_notifier.dart';
 import 'package:intl/intl.dart';
-import 'package:validation_app/models/user_settings.dart'; // Keep for notifier.currentUserSettings type
+// Keep for notifier.currentUserSettings type
 
 /// Main screen for entering daily weight and calories, and viewing calculation results
 class LogInputStatusScreen extends StatefulWidget {
@@ -348,8 +348,8 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
     }
 
     final weightUnit = notifier.currentUserSettings?.weightUnitString ?? 'kg';
-    final trendSmoothingDays =
-        notifier.currentUserSettings?.trendSmoothingDays ?? 7;
+    final algorithmParams = notifier.algorithmParams;
+    final trendSmoothingDays = algorithmParams?.trendSmoothingDays ?? 7;
 
     return Card(
       elevation: 4,
@@ -368,20 +368,18 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
                 context,
                 'True Weight',
                 '${formatNumber(notifier.trueWeight, decimals: 1)} $weightUnit',
-                'Smoothed EMA weight filtering out daily fluctuations.',
+                'Estimated true weight from Kalman filter state, filtering out daily fluctuations and noise.',
               ),
               _buildMetricTile(
                 context,
                 'Weight Trend',
                 '${formatNumber(notifier.weightTrendPerWeek, decimals: 2, showPlus: true)} $weightUnit/week',
-                'Average weekly weight change over the last $trendSmoothingDays days.',
+                'Weekly weight change rate calculated from the Kalman filter state estimation.',
               ),
               _buildMetricTile(
                 context,
                 'Goal Rate',
-                '${formatNumber(notifier.trueWeight != null && notifier.trueWeight! > 0 ? 
-                    (notifier.currentUserSettings?.goalRate ?? 0) * notifier.trueWeight! / 100 : 
-                    0, decimals: 2, showPlus: true)} $weightUnit/week',
+                '${formatNumber(notifier.trueWeight != null && notifier.trueWeight! > 0 ? (notifier.currentUserSettings?.goalRate ?? 0) * notifier.trueWeight! / 100 : 0, decimals: 2, showPlus: true)} $weightUnit/week',
                 'Your targeted rate of weight change per week (${notifier.currentUserSettings?.goalRate ?? 0}% of body weight).',
               ),
             ],
@@ -408,13 +406,13 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
               context,
               'Est. TDEE (Algorithm)',
               '${formatNumber(notifier.estimatedTdeeAlgo, decimals: 0)} kcal',
-              'Total Daily Energy Expenditure calculated from your data.',
+              'Total Daily Energy Expenditure calculated using average calories minus daily weight change effect (weekly trend divided by 7).',
             ),
             _buildMetricTile(
               context,
               'Target Calories (Algorithm)',
               '${formatNumber(notifier.targetCaloriesAlgo, decimals: 0)} kcal',
-              'Recommended daily calories based on your goal and algorithm TDEE.',
+              'Recommended daily calories based on your goal rate and algorithm TDEE (calculated using weekly trend divided by 7).',
             ),
             if (notifier.currentUserSettings != null &&
                 notifier.currentUserSettings!.age > 0 &&
@@ -454,13 +452,13 @@ class LogInputStatusScreenState extends State<LogInputStatusScreen> {
               context,
               'Weight Alpha',
               formatNumber(notifier.currentAlphaWeight, decimals: 3),
-              'Current smoothing factor for weight EMA (dynamic). Range: ${notifier.currentUserSettings?.weightAlphaMin ?? "N/A"} - ${notifier.currentUserSettings?.weightAlphaMax ?? "N/A"}',
+              'Current smoothing factor for weight computation (used in legacy EMA mode or for UI display purposes when Kalman filter is active). Range: ${notifier.algorithmParams?.weightAlphaMin ?? "N/A"} - ${notifier.algorithmParams?.weightAlphaMax ?? "N/A"}',
             ),
             _buildMetricTile(
               context,
               'Calorie Alpha',
               formatNumber(notifier.currentAlphaCalorie, decimals: 3),
-              'Current smoothing factor for calorie EMA (dynamic). Range: ${notifier.currentUserSettings?.calorieAlphaMin ?? "N/A"} - ${notifier.currentUserSettings?.calorieAlphaMax ?? "N/A"}',
+              'Current smoothing factor for calorie EMA (dynamic). Range: ${notifier.algorithmParams?.calorieAlphaMin ?? "N/A"} - ${notifier.algorithmParams?.calorieAlphaMax ?? "N/A"}',
             ),
             if (notifier.tdeeBlendFactorUsed != null &&
                 notifier.tdeeBlendFactorUsed! <

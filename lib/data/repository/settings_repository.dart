@@ -9,8 +9,9 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 
-/// Persists and retrieves [UserSettings] via SharedPreferences
+/// Persists and retrieves [UserSettings] and [AlgorithmParameters] via SharedPreferences
 class SettingsRepository {
+  // Keys for UserSettings
   static const _keyHeight = 'height';
   static const _keyAge = 'age';
   static const _keySex = 'sex';
@@ -18,6 +19,8 @@ class SettingsRepository {
   static const _keyGoalRate = 'goalRate';
   static const _keyWeightUnit = 'weightUnit';
   static const _keyHeightUnit = 'heightUnit';
+
+  // Keys for AlgorithmParameters
   static const _keyWeightAlpha = 'weightAlpha';
   static const _keyWeightAlphaMin = 'weightAlphaMin';
   static const _keyWeightAlphaMax = 'weightAlphaMax';
@@ -25,14 +28,18 @@ class SettingsRepository {
   static const _keyCalorieAlphaMin = 'calorieAlphaMin';
   static const _keyCalorieAlphaMax = 'calorieAlphaMax';
   static const _keyTrendSmoothingDays = 'trendSmoothingDays';
-  
-  // Stream controller to broadcast settings changes
-  final _settingsStreamController = StreamController<UserSettings>.broadcast();
-  
-  // Expose a stream of settings changes
-  Stream<UserSettings> get settingsStream => _settingsStreamController.stream;
 
-  /// Loads settings, falling back to [UserSettings] defaults if not set.
+  // Stream controllers to broadcast changes
+  final _settingsStreamController = StreamController<UserSettings>.broadcast();
+  final _algorithmParamsStreamController =
+      StreamController<AlgorithmParameters>.broadcast();
+
+  // Expose streams for changes
+  Stream<UserSettings> get settingsStream => _settingsStreamController.stream;
+  Stream<AlgorithmParameters> get algorithmParamsStream =>
+      _algorithmParamsStreamController.stream;
+
+  /// Loads user settings, falling back to [UserSettings] defaults if not set.
   Future<UserSettings> loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -49,23 +56,6 @@ class SettingsRepository {
         prefs.getInt(_keyWeightUnit) ?? UserSettings().weightUnit.index;
     final heightUnitIndex =
         prefs.getInt(_keyHeightUnit) ?? UserSettings().heightUnit.index;
-
-    // Load algorithm parameters, or use defaults if not set
-    final weightAlpha =
-        prefs.getDouble(_keyWeightAlpha) ?? UserSettings().weightAlpha;
-    final weightAlphaMin =
-        prefs.getDouble(_keyWeightAlphaMin) ?? UserSettings().weightAlphaMin;
-    final weightAlphaMax =
-        prefs.getDouble(_keyWeightAlphaMax) ?? UserSettings().weightAlphaMax;
-    final calorieAlpha =
-        prefs.getDouble(_keyCalorieAlpha) ?? UserSettings().calorieAlpha;
-    final calorieAlphaMin =
-        prefs.getDouble(_keyCalorieAlphaMin) ?? UserSettings().calorieAlphaMin;
-    final calorieAlphaMax =
-        prefs.getDouble(_keyCalorieAlphaMax) ?? UserSettings().calorieAlphaMax;
-    final trendSmoothingDays =
-        prefs.getInt(_keyTrendSmoothingDays) ??
-        UserSettings().trendSmoothingDays;
 
     // Ensure values are within valid ranges
     final validWeightUnitIndex = _ensureValidEnumIndex(
@@ -93,6 +83,32 @@ class SettingsRepository {
       weightUnit: WeightUnitSystem.values[validWeightUnitIndex],
       heightUnit: HeightUnitSystem.values[validHeightUnitIndex],
       goalRate: goalRate,
+    );
+  }
+
+  /// Loads algorithm parameters, falling back to defaults if not set
+  Future<AlgorithmParameters> loadAlgorithmParameters() async {
+    final prefs = await SharedPreferences.getInstance();
+    final defaultParams = AlgorithmParameters();
+
+    // Load algorithm parameters, or use defaults if not set
+    final weightAlpha =
+        prefs.getDouble(_keyWeightAlpha) ?? defaultParams.weightAlpha;
+    final weightAlphaMin =
+        prefs.getDouble(_keyWeightAlphaMin) ?? defaultParams.weightAlphaMin;
+    final weightAlphaMax =
+        prefs.getDouble(_keyWeightAlphaMax) ?? defaultParams.weightAlphaMax;
+    final calorieAlpha =
+        prefs.getDouble(_keyCalorieAlpha) ?? defaultParams.calorieAlpha;
+    final calorieAlphaMin =
+        prefs.getDouble(_keyCalorieAlphaMin) ?? defaultParams.calorieAlphaMin;
+    final calorieAlphaMax =
+        prefs.getDouble(_keyCalorieAlphaMax) ?? defaultParams.calorieAlphaMax;
+    final trendSmoothingDays =
+        prefs.getInt(_keyTrendSmoothingDays) ??
+        defaultParams.trendSmoothingDays;
+
+    return AlgorithmParameters(
       weightAlpha: _constrainValue(weightAlpha, 0.001, 0.999),
       weightAlphaMin: _constrainValue(weightAlphaMin, 0.001, weightAlphaMax),
       weightAlphaMax: _constrainValue(weightAlphaMax, weightAlphaMin, 0.999),
@@ -115,7 +131,7 @@ class SettingsRepository {
     return value;
   }
 
-  /// Saves all settings to SharedPreferences
+  /// Saves user settings to SharedPreferences
   Future<void> saveSettings(UserSettings settings) async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -130,39 +146,48 @@ class SettingsRepository {
     await prefs.setInt(_keyWeightUnit, settings.weightUnit.index);
     await prefs.setInt(_keyHeightUnit, settings.heightUnit.index);
 
-    // Save algorithm parameters
-    await prefs.setDouble(_keyWeightAlpha, settings.weightAlpha);
-    await prefs.setDouble(_keyWeightAlphaMin, settings.weightAlphaMin);
-    await prefs.setDouble(_keyWeightAlphaMax, settings.weightAlphaMax);
-    await prefs.setDouble(_keyCalorieAlpha, settings.calorieAlpha);
-    await prefs.setDouble(_keyCalorieAlphaMin, settings.calorieAlphaMin);
-    await prefs.setDouble(_keyCalorieAlphaMax, settings.calorieAlphaMax);
-    await prefs.setInt(_keyTrendSmoothingDays, settings.trendSmoothingDays);
-    
     // Notify listeners about the new settings
     _settingsStreamController.add(settings);
+  }
+
+  /// Saves algorithm parameters to SharedPreferences
+  Future<void> saveAlgorithmParameters(AlgorithmParameters params) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // Save algorithm parameters
+    await prefs.setDouble(_keyWeightAlpha, params.weightAlpha);
+    await prefs.setDouble(_keyWeightAlphaMin, params.weightAlphaMin);
+    await prefs.setDouble(_keyWeightAlphaMax, params.weightAlphaMax);
+    await prefs.setDouble(_keyCalorieAlpha, params.calorieAlpha);
+    await prefs.setDouble(_keyCalorieAlphaMin, params.calorieAlphaMin);
+    await prefs.setDouble(_keyCalorieAlphaMax, params.calorieAlphaMax);
+    await prefs.setInt(_keyTrendSmoothingDays, params.trendSmoothingDays);
+
+    // Notify listeners about the new parameters
+    _algorithmParamsStreamController.add(params);
   }
 
   /// Resets algorithm parameters to defaults
   Future<void> resetAlgorithmParameters() async {
     final prefs = await SharedPreferences.getInstance();
-    final defaultSettings = UserSettings(); // Has default algorithm parameters
+    final defaultParams =
+        AlgorithmParameters(); // Has default algorithm parameters
 
-    // Reset only algorithm parameters, keep user profile and unit settings
-    await prefs.setDouble(_keyWeightAlpha, defaultSettings.weightAlpha);
-    await prefs.setDouble(_keyWeightAlphaMin, defaultSettings.weightAlphaMin);
-    await prefs.setDouble(_keyWeightAlphaMax, defaultSettings.weightAlphaMax);
-    await prefs.setDouble(_keyCalorieAlpha, defaultSettings.calorieAlpha);
-    await prefs.setDouble(_keyCalorieAlphaMin, defaultSettings.calorieAlphaMin);
-    await prefs.setDouble(_keyCalorieAlphaMax, defaultSettings.calorieAlphaMax);
+    // Reset algorithm parameters
+    await prefs.setDouble(_keyWeightAlpha, defaultParams.weightAlpha);
+    await prefs.setDouble(_keyWeightAlphaMin, defaultParams.weightAlphaMin);
+    await prefs.setDouble(_keyWeightAlphaMax, defaultParams.weightAlphaMax);
+    await prefs.setDouble(_keyCalorieAlpha, defaultParams.calorieAlpha);
+    await prefs.setDouble(_keyCalorieAlphaMin, defaultParams.calorieAlphaMin);
+    await prefs.setDouble(_keyCalorieAlphaMax, defaultParams.calorieAlphaMax);
     await prefs.setInt(
       _keyTrendSmoothingDays,
-      defaultSettings.trendSmoothingDays,
+      defaultParams.trendSmoothingDays,
     );
-    
-    // Load the updated settings after reset to notify listeners
-    final updatedSettings = await loadSettings();
-    _settingsStreamController.add(updatedSettings);
+
+    // Load the updated parameters after reset to notify listeners
+    final updatedParams = await loadAlgorithmParameters();
+    _algorithmParamsStreamController.add(updatedParams);
   }
 
   /// Exports basic log data as CSV string with unit information
@@ -181,7 +206,9 @@ class SettingsRepository {
 
     // Add each entry as a row
     for (final entry in sortedEntries) {
-      csvBuffer.write('${entry.date},'); // Fixed: Added proper braces for property access
+      csvBuffer.write(
+        '${entry.date},',
+      ); // Fixed: Added proper braces for property access
       csvBuffer.write('${entry.rawWeight ?? ''},');
       csvBuffer.write('${entry.rawPreviousDayCalories ?? ''}\n');
     }
@@ -193,7 +220,12 @@ class SettingsRepository {
     List<LogEntry> entries,
     UserSettings settings,
   ) async {
-    final calculationEngine = CalculationEngine();
+    // Load algorithm parameters
+    final algorithmParams = await loadAlgorithmParameters();
+    // Set algorithm parameters in calculation engine
+    final calculationEngine = CalculationEngine(
+      algorithmParameters: algorithmParams,
+    );
     final jsonList = [];
 
     // Sort entries by date (oldest first) for consistent processing
@@ -253,13 +285,15 @@ class SettingsRepository {
         'activityLevel': settings.activityLevel.toString().split('.').last,
         'weightUnit': settings.weightUnit.toString().split('.').last,
         'goalRate': settings.goalRate,
-        'weightAlpha': settings.weightAlpha,
-        'weightAlphaMin': settings.weightAlphaMin,
-        'weightAlphaMax': settings.weightAlphaMax,
-        'calorieAlpha': settings.calorieAlpha,
-        'calorieAlphaMin': settings.calorieAlphaMin,
-        'calorieAlphaMax': settings.calorieAlphaMax,
-        'trendSmoothingDays': settings.trendSmoothingDays,
+      },
+      'algorithmParamsSnapshot': {
+        'weightAlpha': algorithmParams.weightAlpha,
+        'weightAlphaMin': algorithmParams.weightAlphaMin,
+        'weightAlphaMax': algorithmParams.weightAlphaMax,
+        'calorieAlpha': algorithmParams.calorieAlpha,
+        'calorieAlphaMin': algorithmParams.calorieAlphaMin,
+        'calorieAlphaMax': algorithmParams.calorieAlphaMax,
+        'trendSmoothingDays': algorithmParams.trendSmoothingDays,
       },
       'logData': jsonList,
     };
@@ -324,7 +358,7 @@ class SettingsRepository {
         if (!_isValidDateFormat(rawDate)) {
           continue;
         }
-        
+
         // Convert date to YYYY-MM-DD format if it's not already
         String formattedDate = rawDate;
         if (rawDate.contains('/')) {
@@ -334,11 +368,11 @@ class SettingsRepository {
             // For simplicity, we'll assume DD/MM/YYYY if day <= 12
             // This is a simplified approach - a more robust solution would involve user configuration
             int day, month, year;
-            
+
             // Try to determine format based on values
             final firstNum = int.parse(parts[0]);
             final secondNum = int.parse(parts[1]);
-            
+
             if (firstNum > 12) {
               // If first number > 12, it must be day in DD/MM/YYYY
               day = firstNum;
@@ -355,11 +389,11 @@ class SettingsRepository {
               month = secondNum;
               year = int.parse(parts[2]);
             }
-            
+
             // Format numbers with leading zeros if needed
             String monthStr = month < 10 ? '0$month' : '$month';
             String dayStr = day < 10 ? '0$day' : '$day';
-            
+
             formattedDate = '$year-$monthStr-$dayStr';
           }
         }
@@ -421,7 +455,7 @@ class SettingsRepository {
         return false; // Parsing failed
       }
     }
-    
+
     // Try to parse DD/MM/YYYY format
     final ddmmyyyyPattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$');
     if (ddmmyyyyPattern.hasMatch(date)) {
@@ -438,7 +472,7 @@ class SettingsRepository {
         return false;
       }
     }
-    
+
     // Try to parse MM/DD/YYYY format
     final mmddyyyyPattern = RegExp(r'^\d{1,2}/\d{1,2}/\d{4}$');
     if (mmddyyyyPattern.hasMatch(date)) {
@@ -455,12 +489,13 @@ class SettingsRepository {
         return false;
       }
     }
-    
+
     return false; // No valid format matched
   }
-  
-  /// Closes the stream controller when the repository is no longer needed
+
+  /// Closes all stream controllers when the repository is no longer needed
   void dispose() {
     _settingsStreamController.close();
+    _algorithmParamsStreamController.close();
   }
 }
